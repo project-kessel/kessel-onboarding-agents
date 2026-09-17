@@ -195,6 +195,18 @@ These map directly to the KSL adoption patterns:
 
 The `workspace_id` field in `common_representation.json` assigns the resource to a workspace. A resource can belong to **at most one workspace at a time** — reassignment removes the old relationship. This is why `workspace_id` is a single `string`, not an array.
 
+This 1:1 constraint is the load-bearing assumption of the entire permission model:
+
+| Concern | Single parent (one) | Multiple parents (many) |
+|---|---|---|
+| Permission inheritance | Unambiguous single path | Ambiguous union of N paths |
+| Admin authority | Clear single owner | Conflicting dual governance |
+| Check latency | O(depth) | O(N × depth) fan-out |
+| Cache scope | Narrow subtree | Cross-cutting invalidation |
+| Move operation | Atomic re-parent | Add/remove with orphan risk |
+
+Do not propose `many(workspace)` or an array of workspace IDs — even if the service's domain model suggests a resource "belongs to" multiple groups. Use child workspaces to model cross-cutting access instead (see **Access modeling patterns** below).
+
 ### Permission inheritance
 
 Permissions granted on a parent workspace automatically apply to all descendant workspaces. A Check traversal works upward: current workspace → parent → grandparent → ROOT. If no role binding grants the permission at any level, access is denied.
@@ -202,6 +214,88 @@ Permissions granted on a parent workspace automatically apply to all descendant 
 This is why `default-workspace` and `root-workspace` patterns work without per-resource tuples: the Check targets the org's DEFAULT or ROOT workspace, and the user's role binding at that workspace grants access.
 
 Workspace ID resolution API and auth header rules are in the **Pattern-specific implementation notes** section below.
+
+### Structural constraints for relations
+
+These constraints apply to all relation design in Kessel schemas — both the Starlark unified schema (`.star` files) and KSL (`.ksl` files). Violating them causes ambiguous permissions, broken caching, or fan-out explosions in SpiceDB.
+
+#### Single parent — every resource has at most one "parent" relation
+
+A resource may point to **at most one** other resource as its parent. This applies to both `workspace_id` (the workspace a resource lives in) and any domain hierarchy (cluster→region, node→cluster, etc.).
+
+```ksl
+// ✅ Correct — single parent
+private relation workspace: [ExactlyOne rbac.workspace]
+
+// ❌ Wrong — multiple parents
+relation workspaces: [Any rbac.workspace]        // breaks single-ownership
+```
+
+This is not limited to workspace — if modeling a domain hierarchy (e.g. `node → cluster`), the same rule applies: one cluster per node, not many.
+
+#### Parent and workspace relations point UP — child → parent direction
+
+The `parent` relation (workspace hierarchy) and the `workspace_id` relation (resource-to-workspace binding) always point **upward** — defined on the child, pointing to the parent.
+
+```ksl
+// ✅ Correct — resource points up to workspace
+private relation workspace: [ExactlyOne rbac.workspace]
+
+// ✅ Correct — workspace points up to parent workspace
+relation parent: [AtMostOne workspace]
+
+// ❌ Wrong — workspace points down to children
+relation children: [Any workspace]               // inverted hierarchy direction
+```
+
+**Why:** SpiceDB permission checks walk UP the workspace tree via `t_parent->permission`. The "parent up" direction maps directly to this traversal. A downward relation would require the parent to know about all children — expensive to maintain and breaks when children are added/removed concurrently.
+
+This constraint applies specifically to hierarchical and workspace relations. Other domain relations (e.g., a billing_account having `services: [Any service]`) may point in whichever direction best models the domain.
+
+#### Prefer unidirectional relationships
+
+Default to a single direction for each relationship. SpiceDB can compute the reverse via `LookupSubjects` or `LookupResources` queries without needing an explicit reverse relation.
+
+```ksl
+// ✅ Default — one direction only
+// resource points to workspace:
+private relation workspace: [ExactlyOne rbac.workspace]
+// SpiceDB answers "which resources are in workspace X?" via LookupSubjects — no reverse relation needed
+```
+
+If an access pattern seems to require a bidirectional relationship, evaluate the tradeoffs before proceeding:
+
+| Tradeoff | Impact of adding a reverse relation |
+|---|---|
+| Write cost | 2× writes per create/update (both directions must be written) |
+| Consistency | Risk of drift if one side updates but the other fails |
+| Cache | Cross-cutting invalidation across both types |
+| Check latency | Additional fan-out on reverse type's permission checks |
+| Maintenance | Reporter must keep both relations in sync on every report |
+
+Bidirectional relations should only be added after explicit review and approval by the schema owner.
+
+#### Workspace is the current authorization entry point
+
+Today, all permission checks flow through workspaces — role bindings attach to workspaces, and resources inherit access via their `workspace_id` relation. This is the default pattern to follow.
+
+However, this is the current state, not a permanent constraint. Resource-level permissions (granting access directly on individual resources) are a planned future capability. When designing schemas, use workspace-mediated access as the default, but do not design in ways that would prevent resource-level permissions from being added later.
+
+### Access modeling patterns
+
+These workspace patterns address common access modeling questions that arise during schema design.
+
+#### "Different role, same scope" → multiple bindings on same workspace
+
+When two user groups need access to the same set of resources but with different permissions (e.g., Cost Center viewers vs. SRE operators on the same region), create separate role bindings on the same workspace. No workspace duplication needed.
+
+#### "Same role, different scope" → child workspaces
+
+When two user groups need the same permission but on different subsets of resources (e.g., EU team sees EU clusters, US team sees US clusters), create child workspaces containing only the resources each group should access. Bind each group to their respective workspace.
+
+#### "Cross-cutting access" → shared parent workspace
+
+When a user group needs access to the union of multiple teams' resources (e.g., a cost center manager sees all resources from App Team 1 and App Team 6), make the team workspaces children of a parent workspace and bind the manager to the parent. The workspace hierarchy computes the union automatically.
 
 ---
 
@@ -868,6 +962,7 @@ When defining roles.json entries, cover both:
 
 ## Changelog
 
+- 2026-09: Added structural constraints for relations (single parent, upward direction, unidirectional default, workspace as authorization entry point) and access modeling patterns (different role/same scope, same role/different scope, cross-cutting access) — sourced from starlark-unified-schema schema-design-guide.md.
 - 2026-08: Added workspace/tenancy concepts section; expanded resource schema section with reporter casing duality, workspace_id mechanism explanation, gRPC metadata fields, data reporting discipline rule, additional JSON Schema types (number, pattern, description), and validation error format — sourced from Kessel resource schema docs (add-resource-type, resources-representations, schema, tenancy).
 - 2026-08: Added KSL PR review checklist, KSL language reference, schema design rules, and pattern-specific implementation notes — sourced from KSL PR Review Guidelines PDF, KSL beginners guide, Kessel migration docs, and AuthZed SpiceDB best practices docs.
 - 2026-07: Added KSL generation rules and roles.json authoring rules sections based on live compiler and validator testing.
