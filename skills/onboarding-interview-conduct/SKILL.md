@@ -50,6 +50,19 @@ Confirm with EM:
 
 If `--headless` with `intake_notes`, skip to Step 3 after parsing notes.
 
+**Upfront orientation — show before Group 1 (UX: "going in blind" feedback):** After session setup is confirmed, briefly orient the EM before asking any questions:
+
+> "This intake covers **7 question groups** across two phases. I'll ask one question at a time and wait for your answer before moving on:
+>
+> **Phase 0 (4 groups):** Jira linkage · Contacts · Kickoff & credentials · UI access checks
+> **Phase 1 (3 groups):** Tech stack & asset types · Permissions & inventory · Ephemeral & targets
+>
+> Where I've analysed your repo, I'll show my draft and ask you to confirm or correct it. Any TBD or unknown answers are fine — I'll flag them all at the end.
+>
+> Ready? I'll start with the first question."
+
+This sets expectations for length and the confirm-or-correct pattern without surprising users mid-session.
+
 ### Step 1.5 — Codebase reference (optional)
 
 Ask once, before Group 1: "Do you have a link to the service's repo (GitHub or GitLab URL), a local path, or an archive I can look at? Pointing me at the code lets me draft answers for UI access checks, tech stack, asset types, and v1 permissions, which you then confirm or correct rather than dictating from scratch."
@@ -117,7 +130,15 @@ Annotate drafted values with `(test mode — derived from pre-Kessel signals)` i
 
 ### Step 2 — Interview (one fixed group per turn)
 
-Ask only for **missing** fields, one group at a time, in this fixed order. Never combine groups into a single message, and never send more than one group before the EM responds — this applies in both single-service and multi-service (provider-context) sessions.
+Ask fields one at a time, in the fixed group order below. **Send exactly one question per message and wait for the EM's answer before sending the next.** Never combine two questions into a single message — not within a group, and not across groups. This applies on both Claude and Codex, which cannot present per-question response inputs; a single-question-per-turn flow is the only format that works reliably across both platforms.
+
+**After completing each group: show a brief progress line before moving on (UX: "no sense of progress" feedback).** After the last question in a group is answered, show:
+
+> `✓ Group N/7 done — [N groups remaining] | TBD this group: [list fields, or "none"]`
+
+After Group 4 (last Phase 0 group), add a phase checkpoint:
+
+> `— Phase 0 complete. Starting Phase 1 (3 groups). —`
 
 | Group | Fields | Phase |
 |-------|--------|-------|
@@ -197,6 +218,18 @@ Summary format: see [reference.md](reference.md#narrative-summary-template).
 
 Before requesting EM approval, render the **full profile summary table** in the conversation/chat. Include every captured ServiceProfile field, including unknown or `TBD` values, codebase-derived rationales, and any gaps flagged for Phase 1 follow-up. Writing the narrative summary file or returning its path is not a substitute for displaying the table. Do **not** run suggest-patterns or dedup here — the agent orchestrator calls those next.
 
+**Unresolved decisions tracker — always show at end of Step 5 (UX: "unresolved decisions invisible" feedback):** After the full profile table, render a dedicated section:
+
+> **⚠️ Unresolved decisions — review before provisioning**
+>
+> | Field | Value | Impact if left unresolved |
+> |---|---|---|
+> | {field with TBD/unknown/null/none} | {current value} | {one-line consequence} |
+>
+> _If all fields are resolved, show: "✅ No unresolved decisions — profile is complete."_
+
+Populate this table from every field where the captured value is `null`, `"TBD"`, `"unknown"`, `"none"`, or an explicit "Phase 1 follow-up" note. Include a one-line consequence for each — e.g. "`jira.feature_epic_key = null` — blocks Jira provisioning until a feature epic key is supplied"; "`credentials.service_account_status = none` — Phase 3 blocked until CIAM service account is requested"; "`v1_permissions.items = unknown` — schema-design cannot generate KSL until permissions are identified." This gives the EM a clear action list rather than requiring them to comb through the profile for gaps.
+
 ## Headless mode
 
 When `--headless` is set:
@@ -217,6 +250,7 @@ Return both paths to the orchestrating agent.
 
 ## Changelog
 
+- 2026-09: Test-day user feedback: Step 2 changed from "one group per turn" to "one question per turn" — each field is its own prompt, works on both Claude and Codex without requiring numbered-list responses; Step 1 shows an upfront 7-group orientation so users know what to expect; progress line shown after each group completes; Step 5 adds unresolved decisions tracker surfacing all TBD/unknown/null fields with one-line impact descriptions.
 - 2026-09: Test-day gap fixes: Group 6 now asks for feature flag name, default state, and v1 fallback for services with existing RBAC v1 integration; Group 6 distinguishes inventory reporting code-readiness from production-active status; tech_stack.auth analysis now separately identifies auth SDK vs inventory SDK usage; test mode infers wave 1 when pre-Kessel signals indicate existing deep integration; Group 2 challenges identical EM and tech lead email; codebase_ref URLs are cloned to a local temp directory before any file reads.
 - 2026-09: Gate 1 now requires the complete ServiceProfile summary table to be rendered in the conversation before EM approval, rather than only writing or reporting the artifact path.
 - 2026-08: Added `test_mode` to inputs table; updated Step 4 to document conditional artifact routing (`{artifacts_dir}/profiles/` vs `{artifacts_dir}/test/{slug}/profiles/` when `test_mode = true`).

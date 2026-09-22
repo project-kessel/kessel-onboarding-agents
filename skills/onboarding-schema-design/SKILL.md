@@ -156,9 +156,9 @@ Asset types matched to `root-workspace` or `org-level` do not get inventory-api 
 
 Asset types matched to `native`, `native-ws-list`, or `default-workspace` but with `inventory_migration_required = false` also skip resource schema and KSL type generation — flag this as a follow-up for when the team is ready to report to inventory.
 
-### Step 2 — Reporter Q&A (one group per asset type needing a resource schema)
+### Step 2 — Reporter Q&A (one question per turn per asset type needing a resource schema)
 
-For each asset type classified as needing an inventory-api resource schema in Step 1, ask one group of questions:
+**Ask one question at a time and wait for the answer before asking the next.** Never combine multiple questions into a single message — this applies on both Claude and Codex. For each asset type classified as needing an inventory-api resource schema in Step 1, work through the following questions one at a time:
 
 1. **Reporter name** — "What short name identifies your service as a reporter for `{asset_type}` resources? This becomes the reporter namespace in inventory-api (e.g. `hbi` for Host Based Inventory, `acm` for Advanced Cluster Management, `notifications` for Notifications). Must be lowercase, no hyphens."
 
@@ -207,7 +207,7 @@ Present a proposed mapping table derived from `v1_permissions.items` using the n
 | `delete` | `remove` or `delete` |
 | `*` | `admin` (or expand to individual permissions) |
 
-For each v1 permission, propose the v2 name and ask for confirmation. Example:
+For each v1 permission, propose the v2 name and ask for confirmation **one permission at a time** — do not present the entire mapping table as a single prompt. Wait for confirmation on each before moving to the next. Example of a single-question turn:
 
 ```
 v1: inventory:hosts:read   → v2: inventory_host_view          ✓ confirm?
@@ -534,6 +534,17 @@ Show the EM/tech lead:
 3. Permissions and roles overview
 4. **Validation results** — one line per artifact type with its status from Step 8.5; if any check failed, show the error output before anything else
 5. Any flags or warnings (e.g. "write verb was not split — confirm whether delete/move are separate operations")
+6. **Unresolved decisions tracker (UX: "unresolved decisions invisible" feedback):** Always show a dedicated section after the output summary:
+
+> **⚠️ Unresolved schema decisions — review before opening PRs**
+>
+> | Item | Current value | Impact |
+> |---|---|---|
+> | {any TBD/unknown/deferred item} | {value} | {one-line consequence} |
+>
+> _If none: "✅ No unresolved schema decisions."_
+
+Populate from: any v2 permission name that was proposed but not explicitly confirmed; any reporter field marked "TBD"; any open Q&A question deferred to Phase 2; v1 permissions listed as "unknown — Phase 1 follow-up"; roles with `platform_default` not yet confirmed. This gives the team a clear list of what to revisit before filing PRs, without having to re-read all generated files.
 
 Then ask: **"Would you like to proceed with migrating the service's v1 RBAC call sites to Kessel v2 code now?"**
 
@@ -612,6 +623,7 @@ When `codebase_ref` is available, look for these to draft Step 2–3 answers:
 
 ## Changelog
 
+- 2026-09: Test-day user feedback: Step 9 now shows an unresolved schema decisions tracker after the output summary — surfaces all TBD/unknown/deferred items (unconfirmed v2 names, deferred reporter fields, unknown permissions, unconfirmed platform_default) with one-line impact descriptions so the team knows what to fix before opening PRs.
 - 2026-09: Test-day gap fixes: KSL generation now checks for existing namespace in rbac-config and generates only additive content; README must list any asset_types[] entries omitted from generated schemas with explicit rationale; types inferred from codebase but absent from asset_types[] require EM confirmation before schemas are generated; Step 7 checks for existing deployed roles file before scaffolding; Step 2 Q&A explicitly distinguishes reporter payload from domain model, with guidance to check ReportResource call sites; Step 3b checks for existing v2 permission names (SDK constants, feature flags, KSL context) before applying naming convention; Step 1 asks "new type vs workspace extension" when interview language is ambiguous; Step 7 confirms platform_default on viewer role with EM before finalizing; all URL inputs (codebase_ref, rbac_config_path, inventory_api_path) are cloned locally before analysis.
 - 2026-09: Updated the follow-up implementation topic guidance to use the shared workflow in `AGENTS.md`.
 - 2026-08: Step 9 now offers 3–5 contextually relevant follow-up implementation topics from `context/implementation-topics.json` when the user is not immediately proceeding to migration, so users are guided toward implementation next steps without leaving the conversation.
