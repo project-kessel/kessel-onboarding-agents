@@ -55,7 +55,7 @@ If `--headless` with `intake_notes`, skip to Step 3 after parsing notes.
 Ask once, before Group 1: "Do you have a link to the service's repo (GitHub or GitLab URL), a local path, or an archive I can look at? Pointing me at the code lets me draft answers for UI access checks, tech stack, asset types, and v1 permissions, which you then confirm or correct rather than dictating from scratch."
 
 - If the EM/tech lead has nothing to share, record `codebase_ref` as none and proceed to Group 1 with no analysis — this step never blocks the interview.
-- If provided, record it as `interview.codebase_ref` and attempt analysis with whatever tools are available in this session (e.g. GitHub/GitLab MCP tools for a URL, direct file reads for a local/unzipped path). If access fails — private repo, no matching tool, unreadable archive, `--headless` with no attachment — say so and fall back to asking the affected groups cold; do not stall the session waiting for access.
+- If provided, record it as `interview.codebase_ref` and attempt analysis with whatever tools are available in this session. **If `codebase_ref` is a GitHub or GitLab URL, clone the repository to a local temp directory (`work/codebase/`) before reading any files — do not fetch individual files via URL.** Use the local clone path for all codebase reads. If cloning or access fails — private repo, no matching tool, unreadable archive — say so and fall back to asking the affected groups cold; do not stall the session waiting for access.
 - **Never invent file contents or guess at a repo's structure.** Only draft an inferred value for a field when the agent actually read a matching file; otherwise leave that field unknown and ask the normal question in Step 2.
 
 **What to look for, by field:**
@@ -63,7 +63,7 @@ Ask once, before Group 1: "Do you have a link to the service's repo (GitHub or G
 | Field | Signals to check |
 |-------|-------------------|
 | `tech_stack.lang` / `framework` | Manifest files: `pom.xml`/`build.gradle` (Java), `package.json` (Node), `go.mod` (Go), `requirements.txt`/`pyproject.toml` (Python), `Gemfile` (Ruby) |
-| `tech_stack.auth` | Kessel SDK dependency/imports, or existing RBAC v1 client calls |
+| `tech_stack.auth` | Check for **two distinct SDK uses**: (1) auth/permission SDK — `Check`, `CheckForUpdate`, `ListAllowedWorkspaces`, Kessel SDK auth imports used for access control; (2) inventory SDK — `ReportResource`, `DeleteResource`, inventory client imports used for resource reporting. If only inventory SDK is present with no auth integration, record: "No auth integration; Kessel inventory SDK present for resource reporting." Do not conflate the two.|
 | `ui_access_checks` | Frontend source calling `/rbac/v1/access` (or equivalent) — grep for the literal path |
 | `asset_types[]` | Domain/model classes, DB migrations, or API resource names that look like customer-managed resources |
 | `v1_permissions` | `rbac-config`-style permission definition files (e.g. `permissions.yaml`, access-config manifests) |
@@ -113,6 +113,8 @@ When a file contains both RBAC service logic and Kessel integration code (e.g. `
 
 Annotate drafted values with `(test mode — derived from pre-Kessel signals)` in the summary so the validation skill knows what was inferred vs asked cold.
 
+**Wave inference for already-integrated services in test mode:** Even in test mode, the _presence_ (not content) of certain integration signals is visible and indicates the service is already beyond wave 2. If the codebase shows **all three** of: (a) Kessel SDK imports in any manifest (even if blindfolded from their usage), (b) feature flags with names matching `*rbac-v2*`, `*bypass_kessel*`, or similar gating patterns, and (c) production-grade OAuth2/OIDC credential configuration (not just env var stubs), default `program.wave` to `1` rather than `2`. Note the inference in the summary as `(test mode — wave 1 inferred from pre-Kessel integration signals)` and ask the EM to confirm.
+
 ### Step 2 — Interview (one fixed group per turn)
 
 Ask only for **missing** fields, one group at a time, in this fixed order. Never combine groups into a single message, and never send more than one group before the EM responds — this applies in both single-service and multi-service (provider-context) sessions.
@@ -130,6 +132,8 @@ Ask only for **missing** fields, one group at a time, in this fixed order. Never
 Skip a group entirely if every field in it is already known (from provider context, a prior service in the same multi-service session, or headless notes). In multi-service provider sessions, `jira.home_project` and provider-level fields (`provider.name`) are captured once during provider context and are not re-asked per service.
 
 **Repo-drafted fields (groups 4, 5, 6):** if Step 1.5 produced a draft for a field in that group's turn, present the draft and its rationale in place of the raw question and ask the EM/tech lead to confirm or correct it — do not skip the group or auto-accept the draft. Record whatever they confirm (which may differ from the draft) as the final value, and mark that field `(confirmed from repo analysis)` in the narrative summary. A field with no draft in an otherwise-drafted group is still asked normally.
+
+**Group 2 — contacts duplicate email check):** After recording contacts, if `contacts.em.email == contacts.tech_lead.email`, ask: "The EM and tech lead appear to share the same email address. Is there a separate technical lead we should contact for schema and implementation questions?" Record the clarification before moving to the next group.
 
 **Group 5 mandatory follow-up — asset type ownership:**
 
@@ -152,6 +156,10 @@ If the EM confirms an asset type maps to `rbac.workspace`:
 If codebase analysis in Step 1.5 found a `KesselResourceType` subclass with `namespace="rbac"` for an asset type, draft the answer as "maps to rbac.workspace" and ask the EM to confirm.
 
 **Group 6 — wildcard resource permissions:** When presenting codebase-drafted `v1_permissions`, always include wildcard resource entries (`{app}:*:read`, `{app}:*:write`, `{app}:*:*`) if found in the analysis — do not filter them out as noise. These are meaningful grants (cross-resource-type access) that appear in `permissions.json` and are distinct from resource-specific wildcards like `{app}:{resource}:*`. If the codebase analysis found them, include them in the draft list. Explicitly prompt: "Does your app have any permissions that span all resource types — like `{app}:*:read` or `{app}:*:*`? These are often admin bypass grants."
+
+**Group 6 — inventory reporting code-readiness:** When asking about `inventory_reporting` and `inventory_migration_required`, distinguish between two states: "Does your service currently report resources to Kessel Inventory in production?" (`inventory_reporting` field) AND "Does your service already have inventory reporting code written (e.g. ReportResource calls), even if it isn't active in production yet?" Record both answers. If reporting code exists but is not yet active, note this in the summary (e.g. "Inventory SDK wired but not yet active in production — migration still required") so the schema-design skill understands the service is code-ready.
+
+**Group 6 — feature flag / dual-path strategy:** For services with existing RBAC v1 integration, ask: "Does your service use a feature flag to gate the Kessel v2 authorization path? If so: what is the flag name, what is its default state (on/off), and is there a bypass or fallback to the v1 path?" Record the flag name and bypass mechanism in `docs_gaps[]` if not otherwise captured. This prevents the feature flag strategy from being a consistent miss in schema-design and migration planning.
 
 Rules:
 
@@ -209,6 +217,7 @@ Return both paths to the orchestrating agent.
 
 ## Changelog
 
+- 2026-09: Test-day gap fixes: Group 6 now asks for feature flag name, default state, and v1 fallback for services with existing RBAC v1 integration; Group 6 distinguishes inventory reporting code-readiness from production-active status; tech_stack.auth analysis now separately identifies auth SDK vs inventory SDK usage; test mode infers wave 1 when pre-Kessel signals indicate existing deep integration; Group 2 challenges identical EM and tech lead email; codebase_ref URLs are cloned to a local temp directory before any file reads.
 - 2026-09: Gate 1 now requires the complete ServiceProfile summary table to be rendered in the conversation before EM approval, rather than only writing or reporting the artifact path.
 - 2026-08: Added `test_mode` to inputs table; updated Step 4 to document conditional artifact routing (`{artifacts_dir}/profiles/` vs `{artifacts_dir}/test/{slug}/profiles/` when `test_mode = true`).
 - 2026-08: Elevated Group 5 asset-type ownership question to a mandatory rule (must be asked for every asset type, not skipped); catches types like `group` that map to `rbac.workspace` rather than requiring a new `public type`. Expanded blindfold keep-list to cover all RBAC service integration code (v1 AND v2) with disambiguation rule: RBAC service REST calls (kept) vs Kessel SDK calls (ignored).

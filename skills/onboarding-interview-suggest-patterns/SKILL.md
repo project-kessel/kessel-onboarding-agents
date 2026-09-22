@@ -74,6 +74,8 @@ Decision rules:
 
 Document rationale per pattern in the `rationale` field. If either cardinality or access-probability is unknown, default to `medium` confidence and note what needs confirming with the EM before Phase 2.
 
+**Native/native-ws-list caveat for brand-new types:** If `native` or `native-ws-list` is selected for an asset type where `inventory_migration_required = true` AND no existing resource schema was found in inventory-api (i.e. the type does not yet exist in Kessel), add the following note to the `rationale` field: "Note: this resource type must be registered in inventory-api before this pattern can be applied — the pattern describes the target state once the schema is accepted." Also lower confidence to `medium` unless the EM has explicitly confirmed the type will be submitted to inventory-api as part of this onboarding. The native patterns require the resource to already be (or be actively becoming) workspace-aware in Kessel's data model, which is only true once the inventory-api schema is merged.
+
 ### Step 3 — Assign confidence
 
 Per [patterns.md](patterns.md#confidence). Never assign `high` to org-level or root-workspace for wave 3+ when gate status is not `ready`.
@@ -146,6 +148,7 @@ Updated ServiceProfile with `patterns[]`, `platform_gates[]`, and possibly `prog
 
 ## Changelog
 
+- 2026-09: Added caveat for native/native-ws-list when applied to brand-new types not yet in inventory-api: rationale note added, confidence capped at medium until schema is submitted.
 - 2026-08: Added structured native vs native-ws-list decision guidance with explicit cardinality (<10k) and access-probability (>80%) thresholds; added EM-facing question framing explaining workspace pre-filtering vs per-resource checks without Kessel jargon.
 - 2026-07: Fixed Step 5 to also map the UI platform gate when `ui_access_checks` is `new`, not just `required` — both trigger a conditional UI story and need the same gate tracking.
 - 2026-07: Added `asset_types[]` to each pattern object so multi-pattern services map every asset type to exactly one pattern instead of leaving the split implicit in rationale text.

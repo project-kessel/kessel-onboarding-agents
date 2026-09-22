@@ -56,6 +56,8 @@ Parse `$ARGUMENTS` for:
 - `--inventory-api <path-or-url>` (optional) — local path or git URL to
   `inventory-api`. Only needed if Phase 3 has to generate resource
   schemas (native / native-ws-list / default-workspace patterns).
+
+**URL inputs — clone before reading:** For each argument that accepts a path-or-url (`--rbac`, `--rbac-config`, `--inventory-api`, and the positional `<service-repo>`): if the value is a GitHub or GitLab URL, clone the repository to a local temp directory (`work/rbac/`, `work/rbac-config/`, `work/inventory-api/`, `work/codebase/`) before any analysis. Do **not** fetch individual files via URL. Use the local clone path for all subsequent reads. If cloning fails, stop and report the error — do not fall back to URL fetching.
 - `--profile <path>` (optional) — path to a ServiceProfile JSON. See
   "Bridging from an onboarding profile" below.
 - `--context <path>` (optional) — path to a `migrate-context.md` file

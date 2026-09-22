@@ -70,6 +70,21 @@ Use `search_issues` on the Atlassian MCP server named in config `mcp_server_name
 
 If MCP fails, set `dedup.status` to `unknown` and note "Manual dedup required — MCP unavailable" in summary. Still allow EM to proceed with caution.
 
+### Step 1.5 — Check Kessel repo footprint
+
+After Jira searches, check whether the service's namespace already has live schemas in the Kessel repos. This is independent of Jira and catches services that have already onboarded without a labeled Epic.
+
+If `rbac_config_path` is available:
+- Look for `{namespace}.ksl` or `{namespace}.json` in `{rbac_config_path}/configs/stage/schemas/src/`.
+- If found, report: "Existing KSL schema found for namespace `{namespace}` — schema-design must generate additive content only."
+- Check `{rbac_config_path}/configs/stage/schemas/migrated_apps.lst` — if the app name appears, note it is already migrated.
+
+If `inventory_api_path` is available:
+- Look for directories matching any of the service's `asset_types[]` (snake_case) under `{inventory_api_path}/data/schema/resources/`.
+- If found, report: "Existing inventory-api resource schema found for `{asset_type}` — review before generating new schemas."
+
+Include these findings in the dedup result presented to the EM and in `dedup.notes`. If both Jira and repo checks are clean, `status` remains `clean`. If repo schemas are found but no Jira epic exists, add a note: "Kessel repo footprint detected without a labeled onboarding Epic — verify this is the intended service before provisioning."
+
 ### Step 2 — Classify matches
 
 | Match type | Condition | Suggested action |
@@ -131,6 +146,7 @@ Updated ServiceProfile with `dedup` populated.
 
 ## Changelog
 
+- 2026-09: Added Step 1.5 — Kessel repo footprint check scanning rbac-config and inventory-api for existing namespace schemas alongside the Jira dedup, so schema-design is informed of existing work even when no labeled Epic exists.
 - 2026-07: Hardened JQL templates to anchor on labels instead of bracketed summary text; referenced the connected Atlassian MCP server via config instead of a hardcoded name.
 
 Assisted-by: Claude (Anthropic)
