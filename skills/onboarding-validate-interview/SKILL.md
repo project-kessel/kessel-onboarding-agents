@@ -56,6 +56,8 @@ Read the ServiceProfile JSON. Extract:
 
 Resolve `codebase_ref`. If neither the profile nor the flag provides one, **stop and ask** — the validation cannot proceed without code access.
 
+**URL inputs — clone before reading:** For each path input (`codebase_ref`, `rbac_config_path`, `inventory_api_path`): if the value is a GitHub or GitLab URL, clone the repository to a local temp directory (`work/codebase/`, `work/rbac-config/`, `work/inventory-api/`) before any analysis. Do **not** fetch individual files via URL. Use the local clone path for all subsequent reads. If cloning fails, stop and report the error — do not fall back to URL fetching.
+
 Resolve `rbac_config_path` and `inventory_api_path`. If neither flag nor common locations exist, note the skipped dimensions and continue with what is available.
 
 Create `{artifacts_dir}/validation/` if needed.
@@ -458,6 +460,7 @@ Can also be run retroactively against already-migrated services (like HBI) to ca
 
 ## Changelog
 
+- 2026-09: Added URL cloning rule to Step 0 — all GitHub/GitLab URL inputs are cloned locally before analysis.
 - 2026-07: Initial version. Modeled on the manual HBI validation performed during the interview skill test run.
 
 Assisted-by: Claude (Anthropic)

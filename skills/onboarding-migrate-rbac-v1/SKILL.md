@@ -56,6 +56,8 @@ Parse `$ARGUMENTS` for:
 - `--inventory-api <path-or-url>` (optional) — local path or git URL to
   `inventory-api`. Only needed if Phase 3 has to generate resource
   schemas (native / native-ws-list / default-workspace patterns).
+
+**URL inputs — clone before reading:** For each argument that accepts a path-or-url (`--rbac`, `--rbac-config`, `--inventory-api`, and the positional `<service-repo>`): if the value is a GitHub or GitLab URL, clone the repository to a local temp directory (`work/rbac/`, `work/rbac-config/`, `work/inventory-api/`, `work/codebase/`) before any analysis. Do **not** fetch individual files via URL. Use the local clone path for all subsequent reads. If cloning fails, stop and report the error — do not fall back to URL fetching.
 - `--profile <path>` (optional) — path to a ServiceProfile JSON. See
   "Bridging from an onboarding profile" below.
 - `--context <path>` (optional) — path to a `migrate-context.md` file
@@ -148,9 +150,9 @@ If neither is given, the skill runs fully from repo discovery.
 
 ## Setup
 
-For each repo argument that looks like a URL, `git clone --depth 1` to
-`/tmp/migrate-v1-rbac/<repo-name>/`. For local paths, verify they
-exist. Record resolved local paths for all repos.
+URL inputs are cloned in the Arguments section above — use those resolved local paths (`work/rbac/`, `work/rbac-config/`, `work/inventory-api/`, `work/codebase/`) for all repo reads. For local path inputs, verify the path exists. Record all resolved paths before proceeding.
+
+Generated artifacts (schemas, migration report) go to `/tmp/migrate-v1-rbac/{service-name}/` — do not write generated files to the cloned repo directories.
 
 ## Phase 1: Discover v1 Call Sites and Kessel Gate
 

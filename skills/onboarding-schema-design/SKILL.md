@@ -96,12 +96,20 @@ Read the ServiceProfile JSON. Validate:
 
 Once `codebase_ref` is available, attempt to access it. If access fails (private repo, no matching tool, unreadable path), **stop and report the error** — do not fall back to asking questions cold. The user must resolve access before continuing.
 
+**URL inputs — clone before reading:** For each path input (`codebase_ref`, `rbac_config_path`, `inventory_api_path`): if the value is a GitHub or GitLab URL (contains `github.com` or `gitlab.com`), clone the repository to a local temp directory (`work/codebase/`, `work/rbac-config/`, `work/inventory-api/` respectively) before any analysis. Do **not** fetch individual files via URL — rate limits, private repo auth, blob URL normalization, and lack of directory traversal make URL fetching unreliable. Use the local clone path for all subsequent reads within this skill run. If cloning fails, **stop and report the error** — do not fall back to URL fetching.
+
+**Existing namespace check — non-test mode only:** Before generating any KSL, check whether the target namespace already has a schema file in `{rbac_config_path}/configs/stage/schemas/src/`. Look for `{namespace}.ksl` or `{namespace}.json`. If found:
+1. Read the file in full.
+2. Generate only **additive** content — do not re-declare types, relations, or extensions already present in the existing file.
+3. Note in the generated README which declarations were omitted because they already exist, and which file they live in.
+In test mode, skip this check (the Kessel blindfold applies to existing KSL files).
+
 When access succeeds, perform initial codebase analysis before starting the Q&A:
 
 | What to look for | Where to look |
 |---|---|
 | Domain models / resource types | Model classes, DB migrations, API resource definitions, protobuf messages |
-| Reporter-specific fields | DB columns, API response schemas, serializers, marshmallow/pydantic schemas |
+| Reporter-specific fields | **Primary:** actual `ReportResource` call sites — outbox writers, gRPC client code, event publisher payloads. **Secondary (only when no call sites found):** DB columns, API response schemas, serializers, marshmallow/pydantic schemas, protobuf messages |
 | Existing Kessel SDK usage | `kessel-sdk` imports, `ClientBuilder` calls, permission constants, `KesselPermission` classes |
 | Existing permission definitions | rbac-config references, permission YAML/JSON, `@access` decorators |
 | Service namespace / reporter name | App config, Kessel client setup, ClowdApp config |
@@ -140,19 +148,21 @@ Do not block generation on missing tools — report availability and proceed. Va
 
 If the interview narrative summary notes that an asset type "maps to rbac.workspace" (from the Group 5 ownership follow-up) but its pattern is `native` or `native-ws-list`, that is a contradiction — pause and ask the EM to confirm which is correct before proceeding. Do not silently override the pattern; pattern classification and platform-type ownership must agree.
 
+**"New type vs workspace extension" — ask when language is ambiguous:** If the interview narrative uses language like "extends the workspace hierarchy," "workspace-aware," or "workspace-scoped" for an asset type without explicitly confirming it is a new standalone resource type, ask before generating: "Is `{asset_type}` a new resource type that will exist alongside workspaces (needs a `public type` block), or will it attach additional relations to the existing `rbac.workspace` type (needs a `public extension` on workspace)?" These require completely different KSL outputs and cannot be inferred from the description alone. Record the EM's answer as a classification annotation before proceeding.
+
 Present a classification table to the EM/tech lead for confirmation before proceeding.
 
 Asset types matched to `root-workspace` or `org-level` do not get inventory-api resource schemas — they use the existing `rbac.workspace` type for permission checks and do not report resources to inventory.
 
 Asset types matched to `native`, `native-ws-list`, or `default-workspace` but with `inventory_migration_required = false` also skip resource schema and KSL type generation — flag this as a follow-up for when the team is ready to report to inventory.
 
-### Step 2 — Reporter Q&A (one group per asset type needing a resource schema)
+### Step 2 — Reporter Q&A (one question per turn per asset type needing a resource schema)
 
-For each asset type classified as needing an inventory-api resource schema in Step 1, ask one group of questions:
+**Ask one question at a time and wait for the answer before asking the next.** Never combine multiple questions into a single message — this applies on both Claude and Codex. For each asset type classified as needing an inventory-api resource schema in Step 1, work through the following questions one at a time:
 
 1. **Reporter name** — "What short name identifies your service as a reporter for `{asset_type}` resources? This becomes the reporter namespace in inventory-api (e.g. `hbi` for Host Based Inventory, `acm` for Advanced Cluster Management, `notifications` for Notifications). Must be lowercase, no hyphens."
 
-2. **Reporter-specific fields** — "What fields does your service report for each `{asset_type}` beyond the standard metadata (local_resource_id, api_href, console_href)? For each field, provide:"
+2. **Reporter-specific fields — payload, not domain model:** "What fields does your service write into the `Reporter` struct of a `ReportResource` gRPC call for each `{asset_type}`? These are **not** all fields on the domain model or API response — reporter schemas are deliberately minimal. Typically a small set of correlation identifiers (e.g. satellite_id, subscription_manager_id, insights_id for HBI hosts) that other services use to cross-reference resources." Draft candidate fields from actual `ReportResource` call sites in the codebase (outbox writers, gRPC client code) rather than domain model classes or API serializers. If you cannot find actual reporting code, ask explicitly: "What fields do you include in the reporter section of a ReportResource call — just the identifiers or display fields sent to Kessel, not the full object?" For each confirmed field, collect:
    - Field name (snake_case)
    - Type: `string`, `number`, `integer`, `boolean`, `array`, or `object`
    - Required or optional
@@ -166,8 +176,10 @@ If `codebase_ref` produced model/schema analysis during the interview, draft ans
 | Signal | Where to look |
 |---|---|
 | Reporter name | Service slug, app config, or existing Kessel SDK client setup |
-| Reporter fields | Domain model classes, DB migration columns, API response schemas, protobuf message definitions |
+| Reporter fields | Actual `ReportResource` call sites (outbox writers, gRPC client code) — **not** domain model classes or API serializers |
 | Common fields | Fields shared across different data sources for the same resource |
+
+**Inferred types not in `asset_types[]` — require EM gate:** If codebase analysis reveals a resource type not listed in the profile's `asset_types[]` (e.g. an `assignment` type implied by permissions found in the codebase), do **not** add it to the generated schemas without EM confirmation. Ask: "I found evidence of a `{type}` resource in the codebase — should it be added as an inventoried Kessel asset type? If yes, it will be added to `asset_types[]` and given a resource schema and KSL type." Only proceed after explicit EM confirmation; update the profile's `asset_types[]` to match.
 
 ### Step 3 — Permission naming Q&A
 
@@ -183,6 +195,8 @@ If `codebase_ref` analysis found Kessel SDK usage with a namespace, draft the an
 
 **Step 3b — V2 permission name mapping**
 
+**Check for existing v2 name evidence before proposing:** Before applying the naming convention, search the codebase and any available context for existing v2 permission names: Kessel SDK permission constants or enums, feature flag names referencing the permission (e.g. `hbi.rbac-v2`), prior KSL files, or migrate-context notes. If an existing v2 name is found, use it — do not rename to match convention. Apply the convention-derived name only when no existing name is found, and ask for explicit EM confirmation before finalizing any name that differs from what the convention would produce.
+
 Present a proposed mapping table derived from `v1_permissions.items` using the naming convention `{app}_{resource_singular}_{action}`:
 
 | v1 action | v2 action mapping |
@@ -193,7 +207,7 @@ Present a proposed mapping table derived from `v1_permissions.items` using the n
 | `delete` | `remove` or `delete` |
 | `*` | `admin` (or expand to individual permissions) |
 
-For each v1 permission, propose the v2 name and ask for confirmation. Example:
+For each v1 permission, propose the v2 name and ask for confirmation **one permission at a time** — do not present the entire mapping table as a single prompt. Wait for confirmation on each before moving to the next. Example of a single-question turn:
 
 ```
 v1: inventory:hosts:read   → v2: inventory_host_view          ✓ confirm?
@@ -351,10 +365,14 @@ If v1 permissions span multiple app namespaces (e.g. `inventory` and `staleness`
 
 ### Step 7 — Generate roles.json
 
+**Check for existing deployed file first — non-test mode only:** Before generating, check `{rbac_config_path}/configs/stage/roles/{app}.json`. If it exists, read it fully and use it as the baseline. Present the existing roles to the EM alongside what the scaffold would add or change, and ask which additions are wanted. Do **not** replace the existing file with a scaffold — only generate additive or corrective content. In test mode, skip this check and generate the scaffold from scratch.
+
+**`platform_default` confirmation — always ask:** Before finalizing the viewer role, ask: "Should read access be granted to all platform users by default (`platform_default: true`), or should it require explicit assignment (`platform_default: false`)? Platform-default grants read to every user on the platform without role assignment — appropriate for some services but not for workspace-scoped resources where access should be controlled." Record the EM's answer and apply it to the viewer role. Do not default to `true` without confirmation.
+
 Generate `{output_dir}/rbac-config/roles/{app}.json` with scaffold roles:
 
 1. **{App} administrator** — `system: true`, `admin_default: true`, access: `["{app}:*:*"]`
-2. **{App} viewer** — `system: true`, `platform_default: true`, access: all `read` permissions listed individually
+2. **{App} viewer** — `system: true`, `platform_default: {EM-confirmed value}`, access: all `read` permissions listed individually
 
 Use this template for each role:
 ```json
@@ -380,14 +398,15 @@ If multiple app namespaces, generate one roles file per app.
 Write `{output_dir}/README.md` with:
 
 1. File tree of all generated artifacts
-2. Next steps:
+2. **Omitted asset types — explain any gap:** If any entry in the profile's `asset_types[]` was not given a generated schema (inventory-api resource schema or KSL type), list it explicitly with a one-line rationale. Examples: "`policy` — subsumed into `role_binding` in the v2 model; no separate inventory schema needed", "`permission` — root-workspace pattern; uses existing `rbac.workspace` type, no inventory schema". Never silently omit. If the rationale is uncertain, flag it as an open question.
+3. Next steps:
    - Review and adjust all generated files
    - For resource schemas: copy `{asset_type}/` directories to `inventory-api/data/schema/resources/`, run `go run main.go preload-schema`, run `make build-schemas`
    - For KSL: copy `{namespace}.ksl` to `rbac-config/configs/stage/schemas/src/`, run `make ksl-test-schema-stage` to validate
    - For permissions/roles JSON: copy to `rbac-config/configs/stage/permissions/` and `rbac-config/configs/stage/roles/`, validate against JSON schemas in `rbac-config/schemas/`
    - Add app name(s) to `rbac-config/configs/stage/schemas/migrated_apps.lst`
    - Open PRs against both repos for review
-3. Validation commands (see Step 8.5 results for what was already run; include remaining manual steps)
+4. Validation commands (see Step 8.5 results for what was already run; include remaining manual steps)
 4. Testing resources — include the following links verbatim in the generated README, grouped by purpose:
 
 ```markdown
@@ -515,6 +534,17 @@ Show the EM/tech lead:
 3. Permissions and roles overview
 4. **Validation results** — one line per artifact type with its status from Step 8.5; if any check failed, show the error output before anything else
 5. Any flags or warnings (e.g. "write verb was not split — confirm whether delete/move are separate operations")
+6. **Unresolved decisions tracker (UX: "unresolved decisions invisible" feedback):** Always show a dedicated section after the output summary:
+
+> **⚠️ Unresolved schema decisions — review before opening PRs**
+>
+> | Item | Current value | Impact |
+> |---|---|---|
+> | {any TBD/unknown/deferred item} | {value} | {one-line consequence} |
+>
+> _If none: "✅ No unresolved schema decisions."_
+
+Populate from: any v2 permission name that was proposed but not explicitly confirmed; any reporter field marked "TBD"; any open Q&A question deferred to Phase 2; v1 permissions listed as "unknown — Phase 1 follow-up"; roles with `platform_default` not yet confirmed. This gives the team a clear list of what to revisit before filing PRs, without having to re-read all generated files.
 
 Then ask: **"Would you like to proceed with migrating the service's v1 RBAC call sites to Kessel v2 code now?"**
 
@@ -593,6 +623,8 @@ When `codebase_ref` is available, look for these to draft Step 2–3 answers:
 
 ## Changelog
 
+- 2026-09: Test-day user feedback: Step 9 now shows an unresolved schema decisions tracker after the output summary — surfaces all TBD/unknown/deferred items (unconfirmed v2 names, deferred reporter fields, unknown permissions, unconfirmed platform_default) with one-line impact descriptions so the team knows what to fix before opening PRs.
+- 2026-09: Test-day gap fixes: KSL generation now checks for existing namespace in rbac-config and generates only additive content; README must list any asset_types[] entries omitted from generated schemas with explicit rationale; types inferred from codebase but absent from asset_types[] require EM confirmation before schemas are generated; Step 7 checks for existing deployed roles file before scaffolding; Step 2 Q&A explicitly distinguishes reporter payload from domain model, with guidance to check ReportResource call sites; Step 3b checks for existing v2 permission names (SDK constants, feature flags, KSL context) before applying naming convention; Step 1 asks "new type vs workspace extension" when interview language is ambiguous; Step 7 confirms platform_default on viewer role with EM before finalizing; all URL inputs (codebase_ref, rbac_config_path, inventory_api_path) are cloned locally before analysis.
 - 2026-09: Updated the follow-up implementation topic guidance to use the shared workflow in `AGENTS.md`.
 - 2026-08: Step 9 now offers 3–5 contextually relevant follow-up implementation topics from `context/implementation-topics.json` when the user is not immediately proceeding to migration, so users are guided toward implementation next steps without leaving the conversation.
 - 2026-08: Step 9 extended with Gate 2 — after presenting schema output, offers to invoke migration immediately, write a `migrate-context.md` context file for later, or skip. `migrate-context.md` added to Outputs table. Context file carries v2 permission name mapping, applied patterns, and open questions so `onboarding-migrate-rbac-v1` can skip re-derivation.

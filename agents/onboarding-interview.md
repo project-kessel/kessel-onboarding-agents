@@ -43,6 +43,8 @@ Does **not** create or update Jira issues.
 | `feature_epic_key` | string | no |
 | `intake_notes` | text / file | no (`--headless`) |
 | `codebase_ref` | string | no |
+| `rbac_config_path` | string | no — local path to rbac-config repo root; forwarded to dedup for Kessel repo footprint scan |
+| `inventory_api_path` | string | no — local path to inventory-api repo root; forwarded to dedup for Kessel repo footprint scan |
 | `headless` | flag | no |
 | `save_only` | flag | no |
 | `test_mode` | flag | no |
@@ -80,7 +82,7 @@ Confirm with EM:
 2. EM (or delegate) available
 3. Home Jira project
 
-Parse command flags: `--provider`, `--service`, `--feature-epic`, `--headless`, `--save-only`, `--test-mode`.
+Parse command flags: `--provider`, `--service`, `--feature-epic`, `--headless`, `--save-only`, `--test-mode`, `--rbac-config`, `--inventory-api`.
 
 **`--test-mode` behaviour:**
 - Passes `test_mode = true` to `onboarding-interview-conduct` — activates the Kessel blindfold during codebase analysis (ignores existing Kessel SDK, permission classes, and client code; derives answers from pre-Kessel signals only — see that skill's Step 1.5).
@@ -100,7 +102,7 @@ Invoke `skills/onboarding-interview-suggest-patterns/SKILL.md` with profile path
 
 ### Step 4 — Dedup
 
-Invoke `skills/onboarding-dedup-epic/SKILL.md` with updated profile.
+Invoke `skills/onboarding-dedup-epic/SKILL.md` with the updated profile. Also pass `rbac_config_path` and `inventory_api_path` if they were supplied — the dedup skill uses them for the Kessel repo footprint scan (Step 1.5) and silently skips that scan when they are absent.
 
 If `dedup.status` is `duplicate_found`, present matches and offer:
 

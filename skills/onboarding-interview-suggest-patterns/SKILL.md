@@ -22,7 +22,9 @@ description: >
 | `asset_types` | yes | from profile |
 | `v1_permissions` | yes | from profile |
 | `inventory_reporting` | yes | from profile |
+| `inventory_migration_required` | yes | from profile |
 | `program.wave` | yes | from profile |
+| `inventory_api_path` | no | local path to inventory-api repo root; used to check for existing resource schemas before applying the native/native-ws-list new-type caveat; if omitted, schema existence is treated as unknown |
 | workspace-awareness per asset type | yes for native/native-ws-list | collected from EM in Step 2 |
 | result cardinality per asset type | yes for native/native-ws-list | collected from EM in Step 2 (approximate: hundreds / thousands / millions) |
 | access probability per asset type | yes for native/native-ws-list | collected from EM in Step 2 (approximate: most results accessible, or small fraction) |
@@ -73,6 +75,13 @@ Decision rules:
 > See: https://project-kessel.github.io/docs/building-with-kessel/how-to/migrate-from-rbac-v1-to-v2/
 
 Document rationale per pattern in the `rationale` field. If either cardinality or access-probability is unknown, default to `medium` confidence and note what needs confirming with the EM before Phase 2.
+
+**Native/native-ws-list caveat for brand-new types:** If `native` or `native-ws-list` is selected for an asset type where `inventory_migration_required = true`, check inventory-api for an existing resource schema before deciding whether to apply this caveat:
+
+- If `inventory_api_path` is available: normalize the asset type name to snake_case (`asset_type_snake_case`) by replacing hyphens and spaces with underscores and lowercasing each word segment (e.g. `featureWorkspace` → `feature_workspace`, `role-binding` → `role_binding`). Then look for `{inventory_api_path}/data/schema/resources/{asset_type_snake_case}/`. If the directory does **not** exist, the type is confirmed new — add the note below and cap confidence at `medium`.
+- If `inventory_api_path` is **not** available or the lookup fails: treat schema existence as **unknown**. Do **not** apply the new-type note or lower confidence based solely on the absence of the path.
+
+When the type is confirmed new, add to `rationale`: "Note: this resource type must be registered in inventory-api before this pattern can be applied — the pattern describes the target state once the schema is accepted." Also lower confidence to `medium` unless the EM has explicitly confirmed the type will be submitted to inventory-api as part of this onboarding.
 
 ### Step 3 — Assign confidence
 
@@ -146,6 +155,7 @@ Updated ServiceProfile with `patterns[]`, `platform_gates[]`, and possibly `prog
 
 ## Changelog
 
+- 2026-09: Added caveat for native/native-ws-list when applied to brand-new types not yet in inventory-api: rationale note added, confidence capped at medium until schema is submitted.
 - 2026-08: Added structured native vs native-ws-list decision guidance with explicit cardinality (<10k) and access-probability (>80%) thresholds; added EM-facing question framing explaining workspace pre-filtering vs per-resource checks without Kessel jargon.
 - 2026-07: Fixed Step 5 to also map the UI platform gate when `ui_access_checks` is `new`, not just `required` — both trigger a conditional UI story and need the same gate tracking.
 - 2026-07: Added `asset_types[]` to each pattern object so multi-pattern services map every asset type to exactly one pattern instead of leaving the split implicit in rationale text.
