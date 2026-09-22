@@ -22,7 +22,9 @@ description: >
 | `asset_types` | yes | from profile |
 | `v1_permissions` | yes | from profile |
 | `inventory_reporting` | yes | from profile |
+| `inventory_migration_required` | yes | from profile |
 | `program.wave` | yes | from profile |
+| `inventory_api_path` | no | local path to inventory-api repo root; used to check for existing resource schemas before applying the native/native-ws-list new-type caveat; if omitted, schema existence is treated as unknown |
 | workspace-awareness per asset type | yes for native/native-ws-list | collected from EM in Step 2 |
 | result cardinality per asset type | yes for native/native-ws-list | collected from EM in Step 2 (approximate: hundreds / thousands / millions) |
 | access probability per asset type | yes for native/native-ws-list | collected from EM in Step 2 (approximate: most results accessible, or small fraction) |
@@ -74,7 +76,12 @@ Decision rules:
 
 Document rationale per pattern in the `rationale` field. If either cardinality or access-probability is unknown, default to `medium` confidence and note what needs confirming with the EM before Phase 2.
 
-**Native/native-ws-list caveat for brand-new types:** If `native` or `native-ws-list` is selected for an asset type where `inventory_migration_required = true` AND no existing resource schema was found in inventory-api (i.e. the type does not yet exist in Kessel), add the following note to the `rationale` field: "Note: this resource type must be registered in inventory-api before this pattern can be applied — the pattern describes the target state once the schema is accepted." Also lower confidence to `medium` unless the EM has explicitly confirmed the type will be submitted to inventory-api as part of this onboarding. The native patterns require the resource to already be (or be actively becoming) workspace-aware in Kessel's data model, which is only true once the inventory-api schema is merged.
+**Native/native-ws-list caveat for brand-new types:** If `native` or `native-ws-list` is selected for an asset type where `inventory_migration_required = true`, check inventory-api for an existing resource schema before deciding whether to apply this caveat:
+
+- If `inventory_api_path` is available: look for `{inventory_api_path}/data/schema/resources/{asset_type_snake_case}/`. If the directory does **not** exist, the type is confirmed new — add the note below and cap confidence at `medium`.
+- If `inventory_api_path` is **not** available or the lookup fails: treat schema existence as **unknown**. Do **not** apply the new-type note or lower confidence based solely on the absence of the path.
+
+When the type is confirmed new, add to `rationale`: "Note: this resource type must be registered in inventory-api before this pattern can be applied — the pattern describes the target state once the schema is accepted." Also lower confidence to `medium` unless the EM has explicitly confirmed the type will be submitted to inventory-api as part of this onboarding.
 
 ### Step 3 — Assign confidence
 

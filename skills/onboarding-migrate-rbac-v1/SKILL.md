@@ -150,9 +150,9 @@ If neither is given, the skill runs fully from repo discovery.
 
 ## Setup
 
-For each repo argument that looks like a URL, `git clone --depth 1` to
-`/tmp/migrate-v1-rbac/<repo-name>/`. For local paths, verify they
-exist. Record resolved local paths for all repos.
+URL inputs are cloned in the Arguments section above — use those resolved local paths (`work/rbac/`, `work/rbac-config/`, `work/inventory-api/`, `work/codebase/`) for all repo reads. For local path inputs, verify the path exists. Record all resolved paths before proceeding.
+
+Generated artifacts (schemas, migration report) go to `/tmp/migrate-v1-rbac/{service-name}/` — do not write generated files to the cloned repo directories.
 
 ## Phase 1: Discover v1 Call Sites and Kessel Gate
 

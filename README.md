@@ -125,6 +125,37 @@ The interview and schema-design skills work without any Jira configuration. To e
 
 ---
 
+## Recommended models
+
+Skill complexity varies — some tasks are structured Q&A, others generate KSL and authorization code where errors have downstream consequences. In our experience, relying on Sonnet for Claude (or if you have the budget, OpusPlan is better) and Luna xhigh/max for Codex has been sufficient for the entire suite of skills, especially if you are trying to remain cost conscious.
+
+For more complex code bases or scenarios, some skills may benefit from higher reasoning/context models. Should you desire to run specific skills using different models, below provides a reasonable list of recommended models for each skill process.
+
+
+### Claude Code
+
+| Skill | Recommended model |
+|---|---|
+| `migrate-rbac-v1`, `validate-interview` | Opus/OpusPlan: code generation and multi-repo scoring need the strongest reasoning |
+| `schema-design`, `suggest-patterns` | OpusPlan or Sonnet acceptable for simple services |
+| `interview-conduct` | Sonnet - structured Q&A with confirm-or-correct drafting |
+| `dedup-epic`, `preflight` | Sonnet - mechanical JQL and connectivity checks |
+
+The `/model opusplan` setting (Opus for planning turns, Sonnet for execution) is a reasonable default for most sessions.
+
+### Codex (GPT-5.6 family)
+
+| Skill | Recommended Model |
+|---|---|
+| `migrate-rbac-v1`, `validate-interview` | Sol/Terra high |
+| `schema-design`, `suggest-patterns` | Terra high or Luna Max |
+| `interview-conduct` | Terra medium or Luna xhigh/max |
+| `dedup-epic`, `preflight` | Luna high |
+
+Sol is the most capable but expensive — reserve it for the two skills where a wrong output (incorrect KSL, missed validation dimension) causes real rework only.
+
+---
+
 ## Skills and agents
 
 ### Full onboarding pipeline

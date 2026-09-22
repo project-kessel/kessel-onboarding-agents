@@ -19,12 +19,16 @@ Read `~/.config/kessel-onboarding/config.json`: `jira_cloud_id`, `initiative_pro
 
 ## Inputs
 
-| Input | From |
-|-------|------|
-| `service.name` | ServiceProfile |
-| `provider.name` | ServiceProfile |
-| `jira.home_project` | ServiceProfile (service team's own project — for feature epic lookup) |
-| `jira.feature_epic_key` | ServiceProfile |
+| Input | Required | From |
+|-------|----------|------|
+| `service.name` | yes | ServiceProfile |
+| `provider.name` | yes | ServiceProfile |
+| `jira.home_project` | yes | ServiceProfile (service team's own project — for feature epic lookup) |
+| `jira.feature_epic_key` | no | ServiceProfile |
+| `namespace` | no | Confirmed KSL namespace from interview-conduct or schema-design context; used for rbac-config scan |
+| `asset_types[]` | no | ServiceProfile; each value normalized to snake_case before inventory-api lookup |
+| `rbac_config_path` | no | Local path or URL to rbac-config repo root; omit only when the rbac-config scan is intentionally skipped |
+| `inventory_api_path` | no | Local path or URL to inventory-api repo root; omit only when the inventory-api scan is intentionally skipped |
 
 ## JQL templates
 
@@ -80,7 +84,8 @@ If `rbac_config_path` is available:
 - Check `{rbac_config_path}/configs/stage/schemas/migrated_apps.lst` — if the app name appears, note it is already migrated.
 
 If `inventory_api_path` is available:
-- Look for directories matching any of the service's `asset_types[]` (snake_case) under `{inventory_api_path}/data/schema/resources/`.
+- Normalize each entry in `asset_types[]` to snake_case (e.g. `featureWorkspace` → `feature_workspace`, `role-binding` → `role_binding`) before lookup.
+- Look for directories matching the normalized names under `{inventory_api_path}/data/schema/resources/`.
 - If found, report: "Existing inventory-api resource schema found for `{asset_type}` — review before generating new schemas."
 
 Include these findings in the dedup result presented to the EM and in `dedup.notes`. If both Jira and repo checks are clean, `status` remains `clean`. If repo schemas are found but no Jira epic exists, add a note: "Kessel repo footprint detected without a labeled onboarding Epic — verify this is the intended service before provisioning."

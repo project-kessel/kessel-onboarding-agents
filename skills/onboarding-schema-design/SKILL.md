@@ -109,7 +109,7 @@ When access succeeds, perform initial codebase analysis before starting the Q&A:
 | What to look for | Where to look |
 |---|---|
 | Domain models / resource types | Model classes, DB migrations, API resource definitions, protobuf messages |
-| Reporter-specific fields | DB columns, API response schemas, serializers, marshmallow/pydantic schemas |
+| Reporter-specific fields | **Primary:** actual `ReportResource` call sites — outbox writers, gRPC client code, event publisher payloads. **Secondary (only when no call sites found):** DB columns, API response schemas, serializers, marshmallow/pydantic schemas, protobuf messages |
 | Existing Kessel SDK usage | `kessel-sdk` imports, `ClientBuilder` calls, permission constants, `KesselPermission` classes |
 | Existing permission definitions | rbac-config references, permission YAML/JSON, `@access` decorators |
 | Service namespace / reporter name | App config, Kessel client setup, ClowdApp config |
