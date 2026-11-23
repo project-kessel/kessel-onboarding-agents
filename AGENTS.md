@@ -18,6 +18,7 @@ After any main skill completes its primary output (interview → profile approve
 1. Read `context/implementation-topics.json`.
 2. Select 3–5 topics whose `tags` match the service's context:
    - `inventory_migration_required = true` → suggest `inventory-reporting`, `schema-pr`
+   - Permissions-only service (no asset type needs its own resource type) → suggest `unified-schema`, `rbac-schema-design`, `schema-pr`
    - `ui_access_checks = required` → suggest `endpoint-protection`
    - Pattern = `native-ws-list` → suggest `list-endpoint-authorization`
    - Pattern = `default-workspace` or `root-workspace` → suggest `workspace-lookup`
@@ -63,7 +64,7 @@ The following are **standalone skills** (no full agent required) invoked directl
 | Skill | Command | Purpose |
 |-------|---------|---------|
 | `onboarding-preflight` | `/kessel-onboarding:preflight` | Validates config, MCP, Jira access — run once per machine |
-| `onboarding-schema-design` | `/kessel-onboarding:schema-design` | Generates draft resource schemas (inventory-api) and permissions schemas (rbac-config) from a ServiceProfile + codebase analysis |
+| `onboarding-schema-design` | `/kessel-onboarding:schema-design` | Generates draft schemas from a ServiceProfile + codebase analysis — a unified Starlark schema (`starlark-unified-schema`) for permissions-only services, or the legacy pair (inventory-api resource schemas + rbac-config KSL) for services that define a resource type |
 | `onboarding-validate-interview` | `/kessel-onboarding:validate-interview` | Scores an interview's accuracy against a service's actual Kessel implementation; produces a structured gap report |
 | `onboarding-migrate-rbac-v1` | `/kessel-onboarding:migrate-rbac-v1` | Finds v1 RBAC call sites, classifies by KSL-016 pattern, fills schema gaps, writes Kessel v2 replacement code into the service repo (uncommitted) |
 | *(orchestration)* | `/kessel-onboarding:test` | Full test loop — interview + schema-design with Kessel blindfold, then auto-validate. No dedicated skill file; orchestrated by the `test.md` command. |
@@ -126,6 +127,7 @@ Tool names vary by MCP server implementation; skills refer to capabilities, not 
 
 ## Changelog
 
+- 2026-11: Default to the unified Starlark schema ([starlark-unified-schema](https://github.com/project-kessel/starlark-unified-schema)) for services that onboard permissions but no resources. `onboarding-schema-design` now decides a `schema_source` from the asset-type classification and generates one `schema/{namespace}.star` instead of a hand-authored `.ksl` plus inventory-api JSON Schema when eligible; `onboarding-migrate-rbac-v1` checks both generations for existing v2 permission names and applies the same rule when filling schema gaps. Service code is unaffected — the v2 permission names are identical either way. Added the `unified-schema` implementation topic.
 - 2026-09: Moved the follow-up implementation topic selection and presentation workflow from `CLAUDE.md` into this shared instruction file so all supported runtimes can apply it.
 - 2026-07: Added GitLab CI (`.gitlab-ci.yml`, `scripts/`, `.gitleaks.toml`, `.pre-commit-config.yaml`) — structure/skill-metadata validation and secret/PII scanning, adapted from the TAILWIND program repo's CI and trimmed to this repo's single-contributor, no-registry/no-sandbox/no-license layout. Added a `## When to use` section to every `skills/*/SKILL.md` to satisfy the new metadata check.
 - 2026-07: Added `onboarding-schema-design` and `onboarding-validate-interview` to skill index, locations tree, and commands table.

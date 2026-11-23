@@ -126,16 +126,24 @@
     {
       "id": "rbac-schema-design",
       "title": "Design Permissions Schema",
-      "tags": ["permissions", "schema", "ksl", "design", "relations", "roles", "rbac"],
-      "description": "Opinionated guidance on designing KSL permissions schemas for common authorization concerns",
+      "tags": ["permissions", "schema", "ksl", "starlark", "design", "relations", "roles", "rbac"],
+      "description": "Adding a permission end to end: user-facing vs service-facing naming, registering names in rbac-config, declaring the permission in a .star file, and submitting",
       "public_url": "https://project-kessel.github.io/docs/building-with-kessel/how-to/design-permissions/",
-      "_note": "Public doc is a stub; detailed KSL design guidance is in the plugin's schema-design reference"
+      "_note": "Supplement with the plugin's schema-design reference for the KSL->Starlark translation table and the PR review checklist"
+    },
+    {
+      "id": "unified-schema",
+      "title": "Unified Schema (Starlark)",
+      "tags": ["starlark", "unified-schema", "star", "schema", "ksil", "jsonschema", "permissions-only", "resource", "extensions", "reporter"],
+      "description": "The current-generation schema source: one .star file compiles to both KSIL and JSON Schema, replacing hand-authored KSL and inventory-api schemas. Permissions-only services need just one file.",
+      "public_url": "https://project-kessel.github.io/docs/building-with-kessel/reference/schema/",
+      "_note": "DSL API reference: https://github.com/project-kessel/starlark-unified-schema/blob/main/schema/API.md . Format details, eligibility rule, and the KSL->Starlark translation table are in skills/onboarding-schema-design/reference.md"
     },
     {
       "id": "schema-pr",
       "title": "Submitting Schema PRs",
-      "tags": ["pr", "rbac-config", "inventory-api", "ksl", "schema", "migrated_apps", "review"],
-      "description": "How to submit KSL and resource schema changes to rbac-config and inventory-api; PR review checklist",
+      "tags": ["pr", "starlark-unified-schema", "rbac-config", "inventory-api", "ksl", "starlark", "schema", "migrated_apps", "shipped_schema_files", "review"],
+      "description": "How to submit schema changes: a .star PR against starlark-unified-schema (plus the Makefile allowlist entries) for permissions-only services, or KSL + resource schema PRs against rbac-config and inventory-api; PR review checklist",
       "plugin_ref": "skills/onboarding-schema-design/reference.md"
     },
     {

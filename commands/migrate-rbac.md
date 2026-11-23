@@ -1,6 +1,6 @@
 ---
 description: Migrate a service's RBAC v1 call sites to Kessel v2. Finds v1 RBAC call sites in the service codebase, classifies each by KSL-016 pattern, fills schema gaps, and writes the actual replacement code for review. Run after schema-design for best results.
-argument-hint: "--rbac <path> [--context <path> | --rbac-config <path>] [--inventory-api <path>] [--profile <path>] [<service-repo>]"
+argument-hint: "--rbac <path> [--context <path> | --rbac-config <path>] [--unified-schema <path>] [--inventory-api <path>] [--profile <path>] [<service-repo>]"
 ---
 
 ## Name
@@ -46,7 +46,7 @@ Bridges the gap between "onboarding decided what to do" and "here is the actual 
 
 1. **Discover** — finds every v1 RBAC call site in the service repo and checks Kessel enablement gates
 2. **Classify** — assigns each permission to a KSL-016 pattern (native / native-ws-list / default-workspace)
-3. **Schema** — checks rbac-config for existing v2 mappings; generates a minimal scaffold if missing, or delegates to the `kessel-onboarding:schema-design` skill if available
+3. **Schema** — checks both schema generations for existing v2 mappings (Starlark `.star` in `starlark-unified-schema`, hand-authored `.ksl` in rbac-config); generates a minimal scaffold if missing, or delegates to the `kessel-onboarding:schema-design` skill if available. A namespace that needs no service-owned resource type gets a unified Starlark schema by default rather than a `.ksl` — this changes only where the declaration lives, never the code written in step 4
 4. **Code** — writes the actual Kessel replacement code into the service repo (uncommitted), preserving the v1 dual-path fallback
 5. **Report** — prints a summary and writes the full report to `/tmp/migrate-v1-rbac/{service}/report.md`
 
@@ -70,6 +70,7 @@ Load and execute [skills/onboarding-migrate-rbac-v1/SKILL.md](../skills/onboardi
 | `<service-repo>` | Yes | Local path or git URL to the service to migrate |
 | `--rbac <path>` | Yes | Local path or git URL to `insights-rbac` (workspace lookup API reference) |
 | `--rbac-config <path>` | Yes* | Local path or git URL to `rbac-config` (*optional only if `--profile` already supplies all v2 permission names) |
+| `--unified-schema <path>` | No | Local path or git URL to `starlark-unified-schema` — the current-generation schema source. Checked alongside `--rbac-config` for existing v2 mappings, and used as the target shape when Phase 3 generates a permissions-only schema. Falls back to `~/dev/starlark-unified-schema` and `../starlark-unified-schema`. |
 | `--inventory-api <path>` | No | Local path or git URL to `inventory-api` — needed when Phase 3 must generate resource schemas for native patterns |
 | `--context <path>` | No | Path to `migrate-context.md` written by schema-design Gate 2 "migrate later". Highest-fidelity start — pre-loads v2 permission names, patterns, and all repo paths. Takes precedence over `--profile`. |
 | `--profile <path>` | No | Path to a ServiceProfile JSON from the onboarding interview — eliminates redundant pattern classification. Use when schema-design was not run. |
@@ -86,6 +87,7 @@ Run after `/kessel-onboarding:schema-design` to translate the onboarding decisio
 
 ## Changelog
 
+- 2026-11: Phase 3 now checks both schema generations and defaults permissions-only namespaces to a unified Starlark schema. Added `--unified-schema`.
 - 2026-09: Production authorization is now classified by default, including
   incomplete marker or permission mappings, so stub wording cannot suppress
   required migration work.
