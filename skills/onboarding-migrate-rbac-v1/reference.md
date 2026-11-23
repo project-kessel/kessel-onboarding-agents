@@ -22,7 +22,9 @@ sources, not from memory or from any single service's code:
 
 | Concern | Canonical source |
 |---|---|
-| v1→v2 permission names, KSL schema conventions | `project-kessel/rbac-config` |
+| v1→v2 permission names — **current generation** (Starlark) | `project-kessel/starlark-unified-schema` (`schema/{app}.star`; wrappers in `schema/extensions/`) |
+| v1→v2 permission names, KSL schema conventions — previous generation | `project-kessel/rbac-config` (`configs/{env}/schemas/src/*.ksl`) |
+| How to add a permission; schema model; DSL API | [design-permissions how-to](https://project-kessel.github.io/docs/building-with-kessel/how-to/design-permissions/), [schema reference](https://project-kessel.github.io/docs/building-with-kessel/reference/schema/), [`schema/API.md`](https://github.com/project-kessel/starlark-unified-schema/blob/main/schema/API.md) |
 | Kessel **Inventory API** — `Check`, `CheckForUpdate`, `StreamedListObjects` | `project-kessel/inventory-api` (`api/kessel/inventory/v1beta2`) |
 | Kessel **Relations API** — `Check`, `CheckForUpdate`, lookup/list | `project-kessel/relations-api` (`api/kessel/relations/v1beta1`) |
 | Language **SDKs / clients** (Go, Java, Python, …) | the `project-kessel` GitHub org (per-language client libraries + generated stubs) |
@@ -75,9 +77,18 @@ Getting that mapping wrong is the #1 migration bug (see
 [Gotchas](#gotchas)).
 
 The v1→v2 **permission name** mapping is not invented per-service — it
-already exists in rbac-config `.ksl` files as
-`add_v1_based_permission(... v2_perm:'...')`. Phase 3 extracts it;
-Phase 4 uses those exact names.
+already exists in one of two places:
+
+- **Current generation:** a Starlark source in
+  `starlark-unified-schema`, as
+  `add_v1_based_permission(reporter, app, resource, verb, v2_perm)` —
+  the v2 name is the fifth positional argument.
+- **Previous generation:** an rbac-config `.ksl` file, as
+  `add_v1_based_permission(... v2_perm:'...')`.
+
+Phase 3 checks both and extracts the mapping; Phase 4 uses those exact
+names. The two generations are the same permission model expressed in
+two syntaxes — a service's `Check` call is identical either way.
 
 ---
 
@@ -310,23 +321,99 @@ more dangerous than none.
 
 ---
 
+## Choosing the schema source
+
+Kessel is mid-migration between two schema generations. Phase 3 step 3a
+picks one per namespace; the choice affects only where the permission
+declaration lives, never the service code Phase 4 writes.
+
+| | Unified schema (current) | KSL (previous) |
+|---|---|---|
+| Repo | `starlark-unified-schema` | `rbac-config` |
+| File | `schema/{namespace}.star` | `configs/{env}/schemas/src/{namespace}.ksl` |
+| Language | Starlark, positional args | KSL, `name:'value'` args |
+| Produces | KSIL **and** inventory-api JSON Schema, generated | nothing — hand-authored, paired with a hand-authored JSON Schema tree |
+| Use when | the service onboards **permissions only** — no service-owned resource type, nothing reported to inventory | the service declares its own resource type and reports resources to inventory |
+
+**Default to the unified schema whenever the service is permissions-only.**
+One `.star` file replaces both the `.ksl` and the inventory-api JSON
+Schema that a resource-defining service would need. In this skill's
+pattern vocabulary a namespace is permissions-only when every
+permission in it classified `default-workspace`, or classified `native`
+/ `native-ws-list` but against a type the service does **not** own in
+Kessel (it checks someone else's resource, or checks at workspace
+granularity).
+
+Two overrides beat the rule:
+
+- The namespace **already exists as `.star`** → stay unified, additive.
+- The namespace **already exists as hand-authored `.ksl`** → add to
+  that `.ksl`. Never split one namespace across both generations: KSL
+  is not forward-compatible with Starlark extensions, so a `.ksl` file
+  cannot reference declarations authored in Starlark.
+
+Both generations still need `permissions.json` and `roles.json` in
+rbac-config, plus the app name in `migrated_apps.lst`. Those are RBAC
+registration, not schema, and are unchanged by the choice.
+
+---
+
 ## Minimal schema scaffold
 
 Only used when Phase 3 finds **no** existing v2 mapping for a namespace
 *and* no schema-design skill/plugin is available. Produces just enough
 to unblock Phase 4. Write it to
 `/tmp/migrate-v1-rbac/{service-name}/schema/` — **never** into the
-`--rbac-config` checkout. Flag in Phase 5 that a human must review it
-against rbac-config before merging.
+`--unified-schema` or `--rbac-config` checkout. Flag in Phase 5 that a
+human must review it against the upstream repo before merging.
 
-KSL (the schema language) is service-language-independent — these files
-describe the authorization model, not the service. The shapes below
-mirror rbac-config conventions (`.ksl` with the `add_v1_based_permission`
-macro, plus `permissions.json` and `roles.json`). Replace `myapp` /
-`myresource` and the verbs with the real values discovered in Phase 1b,
-and confirm current syntax against `project-kessel/rbac-config`.
+Both schema languages are service-language-independent — these files
+describe the authorization model, not the service. Generate **one** of
+the two schema variants below per the rule in
+[Choosing the schema source](#choosing-the-schema-source), plus
+`permissions.json` and `roles.json`, which are needed either way.
+Replace `myapp` / `myresource` and the verbs with the real values
+discovered in Phase 1b.
 
-### `{namespace}.ksl`
+### Variant A (default, permissions-only): `{namespace}.star`
+
+Goes in `starlark-unified-schema/schema/`. Confirm wrapper signatures
+against `schema/extensions/rbac.star` in that repo before writing.
+
+```python
+load("extensions/rbac.star", "add_v1_based_permission")
+
+# One call per distinct v1 permission found in Phase 1b.
+# Signature: add_v1_based_permission(reporter, app, resource, verb, v2_perm)
+# The reporter (first arg) must match this file's name: myapp.star -> "myapp".
+# v2_perm convention: {app}_{resource_singular}_{action}  (view/update/delete)
+add_v1_based_permission("myapp", "myapp", "myresource", "read", "myapp_myresource_view")
+add_v1_based_permission("myapp", "myapp", "myresource", "write", "myapp_myresource_update")
+```
+
+Other wrappers, same positional style — `add_unified_permission(reporter,
+app, resource, verb)`, `add_v1only_permission(reporter, perm)`,
+`add_contingent_permission(reporter, first, second, contingent)`, and
+`expose_host_permission(reporter, v2_perm, host_perm)` from
+`extensions/hbi.star`.
+
+No `version` or `namespace` header — the namespace is the reporter
+argument. Comments use `#`. All argument values must be strings.
+
+The PR against `starlark-unified-schema` also needs two Makefile edits,
+or the file is never compiled for release:
+
+```
+Add to SHIPPED_SCHEMA_FILES:   myapp.star
+Add to KSL_RELEASE_FILES:      myapp.json
+```
+
+Note in the Phase 5 report that merging that PR publishes a release
+which rbac-config consumes — the generated `myapp.json` is never
+hand-copied into rbac-config — and that the schema must land before
+the service code that checks the new permissions.
+
+### Variant B (resource-defining services): `{namespace}.ksl`
 
 ```ksl
 version 0.1
@@ -350,9 +437,11 @@ public type myresource {
 > If a resource is not individually modeled (the `default-workspace`
 > pattern), you don't need a `type` block — a bare
 > `@rbac.add_v1_based_permission(...)` at namespace top level is enough
-> to register the permission.
+> to register the permission. A namespace that is entirely bare
+> declarations is permissions-only, which means Variant A was the right
+> choice — go back and generate the `.star` instead.
 
-### `permissions/{app}.json`
+### `permissions/{app}.json` (both variants)
 
 ```json
 {
@@ -364,7 +453,7 @@ public type myresource {
 }
 ```
 
-### `roles/{app}.json`
+### `roles/{app}.json` (both variants)
 
 ```json
 {
@@ -386,11 +475,13 @@ public type myresource {
 ```
 
 After writing the scaffold, re-read it exactly as the "already exist"
-path does — extract the `v2_perm` names from the `.ksl` — and continue
-to Phase 4 using those names.
+path does — extract the `v2_perm` names from the `.star` (fifth
+positional argument) or the `.ksl` (`v2_perm:'...'`) — and continue to
+Phase 4 using those names.
 
 ---
 
 ## Changelog
 
+- 2026-11: Added the **Choosing the schema source** section and a Starlark scaffold variant — permissions-only namespaces now default to a `schema/{namespace}.star` in `starlark-unified-schema` instead of a `.ksl` in rbac-config. Source-of-truth table and the v1→v2 mapping background now cover both generations.
 - 2026-08: Initial version — added to kessel-onboarding plugin alongside `onboarding-migrate-rbac-v1/SKILL.md`. Pattern catalog and call shapes are service- and language-agnostic; minimal schema scaffold used only when no schema-design skill is available in the environment.

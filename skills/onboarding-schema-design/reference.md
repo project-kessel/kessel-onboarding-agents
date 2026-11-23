@@ -2,7 +2,18 @@
 
 Format specifications, naming conventions, and examples for generating Kessel resource and permissions schemas.
 
+Two schema generations are in play. **Permissions-only services** — those that declare no resource
+type of their own and report nothing to inventory — author a single Starlark file in
+`starlark-unified-schema`, which compiles to the downstream artifacts; see
+[Unified schema (Starlark)](#unified-schema-starlark--default-for-permissions-only-services) for
+the eligibility rule and the full format. **Resource-defining services** still hand-author the
+legacy pair: an inventory-api JSON Schema tree and a `.ksl` file in rbac-config. Naming
+conventions, extension semantics, and the PR review checklist are shared by both.
+
 ## Inventory-API resource schema format
+
+**Scope:** resource-defining services only. Permissions-only services report nothing to inventory
+and generate none of these files.
 
 ### Directory structure
 
@@ -299,7 +310,219 @@ When a user group needs access to the union of multiple teams' resources (e.g., 
 
 ---
 
+## Unified schema (Starlark) — default for permissions-only services
+
+Kessel's current-generation schema source is a Starlark DSL in
+[project-kessel/starlark-unified-schema](https://github.com/project-kessel/starlark-unified-schema).
+It is the work-in-progress replacement for hand-authored KSL (`.ksl` in rbac-config) and
+hand-authored JSON Schema (`data/schema/resources/` in inventory-api): one `.star` source
+compiles to **both** downstream artifacts. The two generations interoperate during migration —
+a service can author in Starlark while the services it depends on are still hand-authored KSL.
+
+Authoritative references:
+
+| Topic | Source |
+|---|---|
+| How to add a permission, end to end | https://project-kessel.github.io/docs/building-with-kessel/how-to/design-permissions/ |
+| Schema model and symbols | https://project-kessel.github.io/docs/building-with-kessel/reference/schema/ |
+| Full DSL API reference | https://github.com/project-kessel/starlark-unified-schema/blob/main/schema/API.md |
+| Compiler behaviour, outputs, promotion | `ARCHITECTURE.md` in that repo |
+
+### Eligibility — when to use Starlark instead of KSL + JSON Schema
+
+A service is **unified-schema eligible** when it onboards *permissions only* — it declares no
+resource type of its own in the Kessel authorization graph and reports nothing to inventory-api.
+In the Step 1 classification table, that means **every** asset type either:
+
+- matched `root-workspace` or `org-level` (no resource schema, no type definition), or
+- matched `native` / `native-ws-list` / `default-workspace` but has `inventory_migration_required = false`.
+
+Equivalently: the schema body would be entirely `@rbac.*` / `@hbi.*` extension calls with no
+`public type` block — the "extension-only schema" case in the **KSL PR review checklist** below.
+
+| Service shape | Schema source to generate | Artifacts |
+|---|---|---|
+| Permissions only (eligible) | **One `schema/{app}.star`** in starlark-unified-schema | KSIL `{app}.json`, generated |
+| Defines a resource type / reports to inventory | `.ksl` in rbac-config + JSON Schema in inventory-api | Hand-authored (see **KSL permissions schema format**) |
+
+**Why resource-defining services stay on the legacy path for now:** declaring a resource type in
+Starlark is supported (`resource()` — see the schema reference), but it also requires inventory-api
+to consume the generated JSON Schema for that type, and the delivery allowlist in the repo's
+Makefile currently ships only the `features` namespace. Generate the legacy pair for those
+services and flag in the README that `resource()` is the forward direction — the team should
+confirm the current delivery path with the Kessel team before hand-authoring.
+
+A service on the Starlark path **still needs rbac-config changes** — just not a schema file:
+
+| File | Repo | Still required? |
+|---|---|---|
+| `schema/{app}.star` | starlark-unified-schema | **New** — replaces the `.ksl` |
+| `configs/{env}/schemas/src/{namespace}.ksl` | rbac-config | **No** — generated as `{app}.json` and released |
+| `configs/{env}/permissions/{app}.json` | rbac-config | Yes — unchanged |
+| `configs/{env}/roles/{app}.json` | rbac-config | Yes — unchanged |
+| `configs/{env}/schemas/migrated_apps.lst` | rbac-config | Yes — keyed on the v1 app name, independent of where the schema source lives |
+
+### File layout
+
+```
+starlark-unified-schema/
+├── Makefile                          # SHIPPED_SCHEMA_FILES, KSL_RELEASE_FILES
+└── schema/
+    ├── kessel.star                   # core DSL — resource(), field(), types, cardinality
+    ├── API.md                        # generated DSL reference
+    ├── extensions/
+    │   ├── rbac.star                 # wrappers for the rbac KSL extensions
+    │   └── hbi.star                  # wrapper for hbi.expose_host_permission
+    ├── {app}.star                    # ← permissions-only services add ONE file here
+    └── {type}/                       # resource-defining services (legacy path for onboarding)
+        ├── common_representation.star
+        └── reporters/{reporter}/{type}.star
+```
+
+One file per app at the top level, mirroring the hand-authored `.ksl` files it replaces. The
+**reporter** (first argument of every extension wrapper) must match the file name stem, so all of
+an app's references land in one output namespace: `content_sources.star` passes
+`"content_sources"` and emits `content_sources.json`.
+
+### Minimal `{app}.star`
+
+```python
+load("extensions/rbac.star", "add_v1_based_permission")
+
+# App: content_sources - Resource: repositories
+add_v1_based_permission("content_sources", "content_sources", "repositories", "read", "content_sources_repository_view")
+add_v1_based_permission("content_sources", "content_sources", "repositories", "write", "content_sources_repository_edit")
+```
+
+Structural rules:
+
+- **No `version` or `namespace` header.** The namespace is the `reporter` argument on each call.
+- `load()` paths are relative to `schema/`. Load only the wrappers actually used.
+- Arguments are **positional strings**, not KSL's `name:'value'` form. Every parameter value must
+  be a string.
+- This is Starlark, not Python — no `import`, no classes, no f-strings. Comments use `#`.
+- A file reached only via another file's `load()` contributes nothing. The app file must be passed
+  to the interpreter directly, which is what adding it to `SHIPPED_SCHEMA_FILES` does.
+
+### Extension wrapper signatures
+
+Verbatim from `schema/extensions/rbac.star` and `schema/extensions/hbi.star`. **Every wrapper takes
+`reporter` as its first positional argument** — this is the main difference from the KSL form.
+
+| Wrapper | Signature | Returns |
+|---|---|---|
+| `add_v1_based_permission` | `(reporter, app, resource, verb, v2_perm)` | accessor for `v2_perm` via a workspace relation |
+| `add_unified_permission` | `(reporter, app, resource, verb)` | accessor for `{app}_{resource}_{verb}` |
+| `add_v1only_permission` | `(reporter, perm)` | nothing |
+| `add_contingent_permission` | `(reporter, first, second, contingent)` | accessor for `contingent` |
+| `expose_host_permission` (from `extensions/hbi.star`) | `(reporter, v2_perm, host_perm)` | accessor for `host_perm` via a host relation |
+
+The returned accessor is only needed when wiring the permission into a `resource()` declaration.
+Permissions-only files discard the return value, exactly as `add_v1_based_permission` calls do at
+the top of `schema/host/reporters/hbi/host.star`.
+
+Semantics are identical to the KSL extensions of the same names — these wrappers emit an extension
+*reference* that the rbac-config `ksl` transpiler binds at compile time. Consequently the
+interpreter **cannot** verify that the extension exists: a typo in a name or namespace surfaces
+later, in rbac-config's SpiceDB validation.
+
+### KSL → Starlark translation
+
+| KSL | Starlark |
+|---|---|
+| `version 0.1` + `namespace content_sources` | nothing — file is `schema/content_sources.star`, reporter arg is `"content_sources"` |
+| `import rbac` | `load("extensions/rbac.star", "add_v1_based_permission")` (name each wrapper used) |
+| `import hbi` | `load("extensions/hbi.star", "expose_host_permission")` |
+| `@rbac.add_v1_based_permission(app:'a', resource:'r', verb:'read', v2_perm:'p');` | `add_v1_based_permission("ns", "a", "r", "read", "p")` |
+| `@rbac.add_unified_permission(app:'a', resource:'r', verb:'read')` | `add_unified_permission("ns", "a", "r", "read")` |
+| `@rbac.add_v1only_permission(perm:'p');` | `add_v1only_permission("ns", "p")` |
+| `@rbac.add_contingent_permission(first:'f', second:'s', contingent:'c');` | `add_contingent_permission("ns", "f", "s", "c")` |
+| `@hbi.expose_host_permission(v2_perm:'p', host_perm:'h');` | `expose_host_permission("ns", "p", "h")` |
+| `// comment` | `# comment` |
+
+Argument **order** is preserved in every case; only the `reporter` prefix is added and the
+`name:'value'` syntax drops to positional strings. All naming conventions are unchanged — see
+**V2 permission naming convention** above, which applies identically to both generations.
+
+### Worked example — contingent + host-scoped (advisor shape)
+
+The three-step host-scoped pattern, translated:
+
+```python
+load("extensions/rbac.star", "add_v1_based_permission", "add_contingent_permission")
+load("extensions/hbi.star", "expose_host_permission")
+
+# 1. workspace-level assignment
+add_v1_based_permission("advisor", "advisor", "recommendation_results", "read", "advisor_recommendation_results_view_assigned")
+# 2. intersect with inventory_host_view
+add_contingent_permission("advisor", "inventory_host_view", "advisor_recommendation_results_view_assigned", "advisor_recommendation_results_view")
+# 3. make it checkable on individual hosts
+expose_host_permission("advisor", "advisor_recommendation_results_view", "advisor_recommendation_results_view")
+```
+
+The `_assigned` suffix convention, the order of `add_contingent_permission`'s `first`/`second`
+arguments, and the choice of final permission for `Check` calls are all unchanged from the KSL
+form — see **`_assigned` suffix convention for contingent permissions** below.
+
+### Build, validate, and submit
+
+From a clone of `starlark-unified-schema`:
+
+1. Add `schema/{app}.star`.
+2. Add `{app}.star` to **`SHIPPED_SCHEMA_FILES`** in the `Makefile` (paths are relative to
+   `schema/`). Without this the file is not compiled for release.
+3. Add `{app}.json` to **`KSL_RELEASE_FILES`** in the `Makefile`.
+4. Compile and check the output:
+
+   ```bash
+   make build-interpreter
+   make build-shipped-schema          # honours SHIPPED_SCHEMA_FILES; writes output/ksl, output/jsonschema
+   ls output/ksl/{app}.json           # expect exactly one KSIL file for the new namespace
+   ```
+
+   `make build-schema` instead does a full walk of `schema/` and reads output directories from
+   `.env` (requires the `dotenv` CLI). Either target doubles as the syntax check — a Starlark
+   error fails the build.
+
+5. Optional local dry run of the release tarballs: `make package-release`.
+6. Open a PR against `starlark-unified-schema` with the `.star` source and the Makefile change.
+   Merging to `main` publishes a dated GitHub release (`vYYYYMMDD.n`) containing `ksl.tar.gz`;
+   rbac-config consumes `{app}.json` from it into `configs/{env}/schemas/src/`.
+7. Open the separate rbac-config PR for `permissions/{app}.json`, `roles/{app}.json`, and
+   `migrated_apps.lst`.
+
+**Submit the schema change ahead of the dependent service code** — the permission must exist
+before the service checks it.
+
+Only Starlark source belongs in `starlark-unified-schema`. Generated artifacts are gitignored; do
+not commit `bin/`, `output/`, or any generated JSON.
+
+### Unified-schema gotchas
+
+1. **Reporter must match the file name.** A mismatched reporter scatters an app's references
+   across output namespaces, producing a `{wrong_name}.json` nobody ships.
+2. **Identical calls are deduplicated** within a namespace — a repeated
+   `(namespace, name, params)` tuple is silently collapsed. The *same* call under two different
+   reporters is emitted in both, which is usually a bug in a permissions-only file.
+3. **The file must be in `SHIPPED_SCHEMA_FILES`.** A `.star` file that is never passed to the
+   interpreter (or reached only via `load()`) contributes nothing to the output, and the build
+   still succeeds — check for `output/ksl/{app}.json` rather than trusting exit status.
+4. **Extension names are unverified at compile time.** A typo compiles cleanly here and fails in
+   rbac-config's SpiceDB validation. Cross-check names against `schema/extensions/rbac.star`.
+5. **Permission naming rules are unchanged.** Everything in **V2 permission naming convention**
+   and the **KSL PR review checklist** naming section still applies, including `app` matching the
+   permissions JSON filename and `resource` matching its first-level key exactly.
+6. **Do not re-declare permissions owned by `rbac.ksl`** (`rbac_workspace_edit`, etc.) — the same
+   rule as KSL rule 2 below.
+
+---
+
 ## KSL permissions schema format
+
+**Scope:** the legacy (previous-generation) hand-authored path, used for services that define
+their own resource type or report to inventory-api. Permissions-only services should generate a
+Starlark file instead — see **Unified schema (Starlark)** above. The conventions in this section
+(naming, extension semantics, review checklist) apply to both generations.
 
 KSL (Kessel Schema Language) is a DSL that compiles to SpiceDB's `.zed` format. Each service gets one `.ksl` file in `rbac-config/configs/{env}/schemas/src/`.
 
@@ -962,6 +1185,7 @@ When defining roles.json entries, cover both:
 
 ## Changelog
 
+- 2026-11: Added the **Unified schema (Starlark)** section — eligibility rule for permissions-only services, `schema/{app}.star` layout, verbatim extension wrapper signatures from `starlark-unified-schema`, a KSL→Starlark translation table, worked contingent/host-scoped example, build-and-submit steps (`SHIPPED_SCHEMA_FILES` / `KSL_RELEASE_FILES`), and unified-schema gotchas. Scoped the inventory-api and KSL sections to resource-defining services.
 - 2026-09: Added structural constraints for relations (single parent, upward direction, unidirectional default, workspace as authorization entry point) and access modeling patterns (different role/same scope, same role/different scope, cross-cutting access) — sourced from starlark-unified-schema schema-design-guide.md.
 - 2026-08: Added workspace/tenancy concepts section; expanded resource schema section with reporter casing duality, workspace_id mechanism explanation, gRPC metadata fields, data reporting discipline rule, additional JSON Schema types (number, pattern, description), and validation error format — sourced from Kessel resource schema docs (add-resource-type, resources-representations, schema, tenancy).
 - 2026-08: Added KSL PR review checklist, KSL language reference, schema design rules, and pattern-specific implementation notes — sourced from KSL PR Review Guidelines PDF, KSL beginners guide, Kessel migration docs, and AuthZed SpiceDB best practices docs.

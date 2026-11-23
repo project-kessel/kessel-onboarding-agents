@@ -11,7 +11,7 @@ allowed-tools:
   - Agent
   - AskUserQuestion
   - Skill
-argument-hint: "--rbac <path> --rbac-config <path> [--inventory-api <path>] [--profile <path>] <service-repo>"
+argument-hint: "--rbac <path> --rbac-config <path> [--unified-schema <path>] [--inventory-api <path>] [--profile <path>] <service-repo>"
 ---
 
 # Migrate RBAC v1 Call Sites to Kessel v2
@@ -50,14 +50,22 @@ Parse `$ARGUMENTS` for:
   APIs (`/v2/workspaces?type=default|root`).
 - `--rbac-config <path-or-url>` (required unless `--profile` already
   supplies v2 permission names for every target) — local path or git
-  URL to `rbac-config`. Used to check whether v2 permissions/KSL
-  already exist for this service, and as the target shape for schema
-  generation if not.
+  URL to `rbac-config`. Used to check whether v2 permissions already
+  exist for this service (in `.ksl` or released KSIL `.json`), and for
+  the `permissions.json` / `roles.json` half of schema generation.
+- `--unified-schema <path-or-url>` (optional) — local path or git URL to
+  [`starlark-unified-schema`](https://github.com/project-kessel/starlark-unified-schema),
+  the current-generation schema source. Checked alongside `--rbac-config`
+  in Phase 3 for an existing v2 permission mapping, and used as the
+  target shape when Phase 3 must generate a permissions-only schema.
+  If omitted, Phase 3 still checks `~/dev/starlark-unified-schema` and
+  `../starlark-unified-schema` before falling back to the reference
+  scaffold.
 - `--inventory-api <path-or-url>` (optional) — local path or git URL to
   `inventory-api`. Only needed if Phase 3 has to generate resource
   schemas (native / native-ws-list / default-workspace patterns).
 
-**URL inputs — clone before reading:** For each argument that accepts a path-or-url (`--rbac`, `--rbac-config`, `--inventory-api`, and the positional `<service-repo>`): if the value is a GitHub or GitLab URL, clone the repository to a local temp directory (`work/rbac/`, `work/rbac-config/`, `work/inventory-api/`, `work/codebase/`) before any analysis. Do **not** fetch individual files via URL. Use the local clone path for all subsequent reads. If cloning fails, stop and report the error — do not fall back to URL fetching.
+**URL inputs — clone before reading:** For each argument that accepts a path-or-url (`--rbac`, `--rbac-config`, `--unified-schema`, `--inventory-api`, and the positional `<service-repo>`): if the value is a GitHub or GitLab URL, clone the repository to a local temp directory (`work/rbac/`, `work/rbac-config/`, `work/unified-schema/`, `work/inventory-api/`, `work/codebase/`) before any analysis. Do **not** fetch individual files via URL. Use the local clone path for all subsequent reads. If cloning fails, stop and report the error — do not fall back to URL fetching.
 - `--profile <path>` (optional) — path to a ServiceProfile JSON. See
   "Bridging from an onboarding profile" below.
 - `--context <path>` (optional) — path to a `migrate-context.md` file
@@ -131,8 +139,14 @@ generated KSL, the pattern classification, all repo paths, and any open
 questions flagged during schema design.
 
 When present:
-- Extract `--rbac-config`, `--inventory-api`, `codebase_ref` from the
-  context file; command-line flags override these if also supplied.
+- Extract `--rbac-config`, `--unified-schema`, `--inventory-api`,
+  `codebase_ref` from the context file; command-line flags override these if
+  also supplied.
+- Read the context's **Schema source** line (`unified` or `ksl`). It records
+  which generation schema-design targeted; carry it into Phase 3 rather than
+  re-deciding, and report it in Phase 5. An older context file written before
+  this field existed implies `ksl` — re-run the Phase 3 step 3a check rather
+  than assuming.
 - Phase 1 still scans the repo (code is the source of truth), but uses the
   context's v2 permission mapping to skip Phase 3 schema lookup — the
   mappings are read directly from the context's "v2 permission name mapping"
@@ -150,7 +164,7 @@ If neither is given, the skill runs fully from repo discovery.
 
 ## Setup
 
-URL inputs are cloned in the Arguments section above — use those resolved local paths (`work/rbac/`, `work/rbac-config/`, `work/inventory-api/`, `work/codebase/`) for all repo reads. For local path inputs, verify the path exists. Record all resolved paths before proceeding.
+URL inputs are cloned in the Arguments section above — use those resolved local paths (`work/rbac/`, `work/rbac-config/`, `work/unified-schema/`, `work/inventory-api/`, `work/codebase/`) for all repo reads. For local path inputs, verify the path exists. Record all resolved paths before proceeding.
 
 Generated artifacts (schemas, migration report) go to `/tmp/migrate-v1-rbac/{service-name}/` — do not write generated files to the cloned repo directories.
 
@@ -251,27 +265,61 @@ whether a per-resource check is fine or the service needs a
 
 ## Phase 3: Check for Existing v2 Schema, Fill Gaps
 
-For each v1 app namespace found in Phase 1b, check the `--rbac-config`
-repo:
+Kessel has two schema generations in play. Check **both** — a service's
+permissions may already be declared in either, and the newer one is not
+visible from rbac-config alone.
+
+| Generation | Source of truth | Shape |
+|---|---|---|
+| Current — **unified schema** | `starlark-unified-schema` (`--unified-schema`) | `schema/{app}.star`, Starlark, compiles to KSIL |
+| Previous — **KSL** | `rbac-config` (`--rbac-config`) | `configs/{env}/schemas/src/{namespace}.ksl`, hand-authored |
+
+For each v1 app namespace found in Phase 1b:
 
 ```
+# Previous generation — hand-authored KSL in rbac-config
 ls <rbac-config-path>/configs/*/schemas/src/{namespace}.ksl
+grep -rn "add_v1_based_permission.*app:'{app}'" <rbac-config-path>/configs/*/schemas/src/
+
+# RBAC registration — needed on both paths
 ls <rbac-config-path>/configs/*/permissions/{app}.json
 ls <rbac-config-path>/configs/*/roles/{app}.json
-grep -rn "add_v1_based_permission.*app:'{app}'" <rbac-config-path>/configs/*/schemas/src/
+
+# Current generation — Starlark in starlark-unified-schema
+ls <unified-schema-path>/schema/{namespace}.star
+grep -rn "\"{app}\"" <unified-schema-path>/schema/*.star <unified-schema-path>/schema/*/reporters/*/*.star
 ```
 
-**If v2 permissions/KSL already exist:** extract the v1→v2 name
-mapping directly from the `.ksl` file's `add_v1_based_permission` (or
-`add_unified_permission` / `add_v1only_permission`) calls. Use these
-exact names in Phase 4 — never invent new ones when a mapping already
-exists.
+A `{namespace}.json` in `rbac-config/configs/*/schemas/src/` is generated
+KSIL released from `starlark-unified-schema`, not a hand-authored file.
+Treat it as evidence the namespace is on the unified path and read the
+`.star` source for the mapping; never propose editing it in place.
+
+**If v2 permissions already exist in either generation:** extract the
+v1→v2 name mapping and use those exact names in Phase 4 — never invent
+new ones when a mapping already exists.
+
+- From a `.ksl` file: the `v2_perm:'...'` argument of
+  `add_v1_based_permission`, or `{app}_{resource}_{verb}` for
+  `add_unified_permission`; also read `add_v1only_permission` and
+  `add_contingent_permission`.
+- From a `.star` file: the same extensions, called positionally with the
+  reporter prepended —
+  `add_v1_based_permission(reporter, app, resource, verb, v2_perm)`, so
+  the v2 name is the **fifth** argument;
+  `add_unified_permission(reporter, app, resource, verb)` yields
+  `{app}_{resource}_{verb}`;
+  `add_contingent_permission(reporter, first, second, contingent)` — the
+  checkable name is `contingent`, never the `_assigned` intermediate.
+
+Record which generation each mapping came from; Phase 5 reports it.
 
 Before generating or delegating any Phase 3 schema output, or writing any
 Phase 4 replacement code, request explicit user approval through the
 available user-approval question capability. Summarize the planned files,
-call sites, permission mapping, and unresolved questions. Offer exactly
-these choices:
+call sites, permission mapping, the schema source chosen in step 3a below
+(unified Starlark vs legacy KSL) with its reason, and unresolved questions.
+Offer exactly these choices:
 
 - **Proceed** — continue to the planned writes.
 - **Revise** — return to Phase 2/3 planning, update the proposed approach,
@@ -288,31 +336,66 @@ report; no destructive or external write may bypass it.
 
 **If missing for a namespace:**
 
+First decide which generation to generate for, then generate.
+
+**3a. Pick the schema source.** The rule matches the schema-design
+skill's Step 1.5 — see
+[reference.md](reference.md#choosing-the-schema-source) for the full
+form:
+
+- **No Phase 2 pattern for this namespace requires a service-owned
+  resource type** (every permission classified `default-workspace`, or
+  `native` / `native-ws-list` where the service is not reporting
+  resources to inventory) → the service onboards **permissions only**.
+  Generate a **unified Starlark** `{namespace}.star`. This is the
+  default; it replaces both the `.ksl` and any inventory-api JSON
+  Schema.
+- **Any permission needs a per-resource check against a type the
+  service owns in Kessel** (`native` / `native-ws-list` with resources
+  reported to inventory) → generate the legacy pair (`.ksl` +
+  inventory-api resource schema).
+- **The namespace already exists as `.star`** → stay on the unified
+  path, additive, regardless of the above.
+- **The namespace already exists as hand-authored `.ksl`** → add to
+  that `.ksl`. Do not split one namespace across both generations; KSL
+  is not forward-compatible with Starlark extensions.
+
+If the classification is `low` confidence for any permission in the
+namespace, do not pick for the user — surface the choice in the
+Phase 3 approval gate above.
+
+**3b. Generate.**
+
 1. Check whether a schema-design capability is available in this
    environment — e.g. a skill or plugin whose name contains
    `schema-design` or `onboarding` in the current skills/agents
    listing. If one is available, prefer it for a properly-vetted,
    Q&A-driven result:
    ```
-   Skill(skill: "<discovered-skill-name>", args: "--codebase_ref <service-repo-path> --rbac_config_path <rbac-config-path>")
+   Skill(skill: "<discovered-skill-name>", args: "--codebase_ref <service-repo-path> --rbac_config_path <rbac-config-path> --unified_schema_path <unified-schema-path>")
    ```
 2. **If none is available**, generate a minimal schema yourself using
-   the scaffold in [reference.md](reference.md#minimal-schema-scaffold).
-   This produces just enough — a `.ksl` file with the right
-   `add_v1_based_permission` declarations, `permissions.json`, and
+   the scaffold in [reference.md](reference.md#minimal-schema-scaffold)
+   matching the 3a verdict — the Starlark scaffold for permissions-only
+   services, the KSL scaffold otherwise. Either produces just enough —
+   the right permission declarations plus `permissions.json` and
    `roles.json` — to unblock Phase 4. It is intentionally lighter than
    a dedicated schema-design tool (no reporter-field modeling, no
    cross-service contingent-permission interview) — flag in Phase 5
-   that a human should review these against
-   [rbac-config's own schemas](https://github.com/project-kessel/rbac-config)
+   that a human should review it against
+   [starlark-unified-schema](https://github.com/project-kessel/starlark-unified-schema)
+   or [rbac-config](https://github.com/project-kessel/rbac-config)
    before merging.
 
 Either way, write the output to
 `/tmp/migrate-v1-rbac/{service-name}/schema/` — never write directly
-into the `--rbac-config` checkout.
+into the `--rbac-config` or `--unified-schema` checkout.
 
 Once a mapping exists (from either path), re-read it the same way as
-the "already exist" case above and continue to Phase 4.
+the "already exist" case above and continue to Phase 4. The v2
+permission names Phase 4 uses are identical either way — the generation
+choice changes where the declaration lives, not what the service calls
+`Check` with.
 
 ## Phase 4: Write the Replacement Code
 
@@ -360,8 +443,14 @@ Print a summary (under 30 lines) to the conversation:
 - Call sites migrated/fixed, by file
 - Patterns used, and any low-confidence classifications needing
   confirmation
-- Schema gaps filled in Phase 3 (and via which path — discovered
-  skill vs. minimal scaffold) vs. still open
+- Where each v2 permission mapping came from — existing `.star`,
+  existing `.ksl`, or generated in Phase 3
+- Schema gaps filled in Phase 3: which generation was targeted
+  (unified Starlark vs legacy KSL) and why, via which path (discovered
+  skill vs. minimal scaffold) — vs. still open. On the unified path,
+  state that the PR also needs the `SHIPPED_SCHEMA_FILES` and
+  `KSL_RELEASE_FILES` Makefile entries, and that the schema change
+  must land before this service's code
 - Open questions surfaced in Phase 4
 - Whether any v1 fallback paths were left in place intentionally, and
   whether a follow-up pass should remove them once the Kessel path is
@@ -386,8 +475,12 @@ topic or ask for something else. Good candidates at this stage:
 
 ## Important Notes
 
-- Never modify the `--rbac`, `--rbac-config`, or `--inventory-api`
-  repos — all generated schema output goes to `/tmp/migrate-v1-rbac/`.
+- Never modify the `--rbac`, `--rbac-config`, `--unified-schema`, or
+  `--inventory-api` repos — all generated schema output goes to
+  `/tmp/migrate-v1-rbac/`.
+- The schema generation choice (unified Starlark vs legacy KSL) never
+  changes the service code. The v2 permission names Phase 4 writes are
+  the same either way; only the declaration's home repo differs.
 - Never stage, commit, or push in the service codebase — leave changes
   as unstaged working-tree edits so they are visible via `git diff`.
 - If a v1 call site's pattern classification is `low` confidence, do
@@ -401,6 +494,15 @@ topic or ask for something else. Good candidates at this stage:
 
 ## Changelog
 
+- 2026-11: Phase 3 now checks both schema generations. Added
+  `--unified-schema <path-or-url>` for `starlark-unified-schema`, extraction
+  of v2 permission names from positional `.star` extension calls alongside
+  the KSL form, and step 3a — when a namespace needs no service-owned
+  resource type, gap-filling generates a unified Starlark `{namespace}.star`
+  instead of a `.ksl` plus inventory-api JSON Schema. `migrate-context.md`'s
+  new `Schema source` line is honoured, and Phase 5 reports which generation
+  each mapping came from. Phase 4 output is unchanged — the generation
+  choice does not affect the service code.
 - 2026-09: Treat services as production by default during authorization
   classification; require migration or surfaced ambiguity when markers or
   mappings exist without executable checks, and honor
